@@ -2,8 +2,9 @@
 Connection Model
 """
 
-from sqlalchemy import Column, String, Text, DateTime, Boolean, ForeignKey, JSON
+from sqlalchemy import Column, String, Text, DateTime, Boolean, ForeignKey, JSON, Index
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import expression
 from verxlite_api.db.base import BaseModel
 from verxlite_api.utils.encryption import encrypt_data, decrypt_data
 from verxlite_api.config import settings
@@ -12,13 +13,36 @@ from verxlite_api.config import settings
 class Connection(BaseModel):
     """
     Represents an OAuth connection to an external service (Google, HubSpot, etc.).
+    
+    Attributes:
+        tenant_id: Tenant this connection belongs to
+        user_id: User who owns this connection
+        provider: Service provider (google, hubspot, salesforce, etc.)
+        provider_user_id: User ID from the provider
+        access_token: Encrypted OAuth access token
+        refresh_token: Encrypted OAuth refresh token
+        token_type: Type of token (Bearer, etc.)
+        expires_at: When the access token expires
+        scope: Comma-separated list of scopes
+        is_active: Whether the connection is active
+        metadata: Additional provider-specific data
+        last_sync_at: When data was last synced
+        sync_status: Status of last sync (success, failed, pending)
+        sync_error: Error message from last sync
     """
     __tablename__ = "connections"
+    __table_args__ = (
+        Index("ix_connection_tenant", "tenant_id"),
+        Index("ix_connection_user", "user_id"),
+        Index("ix_connection_provider", "provider"),
+        Index("ix_connection_active", "is_active"),
+        Index("ix_connection_expires", "expires_at"),
+    )
 
-    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
-    provider = Column(String(50), nullable=False)  # google, hubspot, salesforce
-    provider_user_id = Column(String(255), nullable=True)  # User ID from the provider
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String(50), nullable=False)  # google, hubspot, salesforce, outlook, etc.
+    provider_user_id = Column(String(255), nullable=True)
     access_token = Column(Text, nullable=True)
     refresh_token = Column(Text, nullable=True)
     token_type = Column(String(50), nullable=True)
@@ -26,15 +50,22 @@ class Connection(BaseModel):
     scope = Column(Text, nullable=True)  # Comma-separated scopes
     is_active = Column(Boolean, default=True, nullable=False)
     metadata = Column(JSON, nullable=True)  # Additional provider-specific data
+    last_sync_at = Column(DateTime, nullable=True)
+    sync_status = Column(String(20), nullable=True)  # success, failed, pending
+    sync_error = Column(Text, nullable=True)
 
     # Relationships
     tenant = relationship("Tenant", backref="connections")
+    user = relationship("User")
 
     @property
     def decrypted_access_token(self):
         """Decrypt the access token."""
         if self.access_token:
-            return decrypt_data(self.access_token, settings.ENCRYPTION_KEY)
+            try:
+                return decrypt_data(self.access_token, settings.ENCRYPTION_KEY)
+            except Exception:
+                return None
         return None
 
     @decrypted_access_token.setter
@@ -49,7 +80,10 @@ class Connection(BaseModel):
     def decrypted_refresh_token(self):
         """Decrypt the refresh token."""
         if self.refresh_token:
-            return decrypt_data(self.refresh_token, settings.ENCRYPTION_KEY)
+            try:
+                return decrypt_data(self.refresh_token, settings.ENCRYPTION_KEY)
+            except Exception:
+                return None
         return None
 
     @decrypted_refresh_token.setter
@@ -60,5 +94,42 @@ class Connection(BaseModel):
         else:
             self.refresh_token = None
 
+    @property
+    def is_expired(self):
+        """Check if the access token is expired."""
+        if not self.expires_at:
+            return True
+        return self.expires_at < DateTime.utcnow()
+
+    @property
+    def scopes_list(self):
+        """Get scopes as a list."""
+        if not self.scope:
+            return []
+        return self.scope.split(",") if isinstance(self.scope, str) else self.scope
+
+    def has_scope(self, scope: str) -> bool:
+        """Check if connection has a specific scope."""
+        return scope in self.scopes_list
+
+    def to_dict(self):
+        """Convert connection to dictionary (sanitized - no tokens)."""
+        return {
+            "id": self.id,
+            "tenant_id": self.tenant_id,
+            "user_id": self.user_id,
+            "provider": self.provider,
+            "provider_user_id": self.provider_user_id,
+            "token_type": self.token_type,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "scope": self.scope,
+            "is_active": self.is_active,
+            "is_expired": self.is_expired,
+            "last_sync_at": self.last_sync_at.isoformat() if self.last_sync_at else None,
+            "sync_status": self.sync_status,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
     def __repr__(self):
-        return f"<Connection(id={self.id}, provider={self.provider}, user_id={self.user_id})>"
+        return f"<Connection(id={self.id}, provider={self.provider}, user_id={self.user_id}, is_active={self.is_active})>"
