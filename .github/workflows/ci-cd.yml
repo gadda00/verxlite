@@ -1,0 +1,132 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  DOCKER_COMPOSE_VERSION: "2.23.0"
+
+jobs:
+  test:
+    name: Test Backend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: verxlite
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready -U postgres --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Install dependencies
+        run: |
+          cd api
+          poetry install --no-interaction --no-ansi
+
+      - name: Run linting
+        run: |
+          cd api
+          poetry run ruff check .
+          poetry run black --check .
+
+      - name: Run tests
+        run: |
+          cd api
+          poetry run pytest tests/ -v
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/verxlite
+          REDIS_URL: redis://localhost:6379/0
+
+  build:
+    name: Build and Push Docker Images
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Build and push API image
+        run: |
+          cd api
+          docker build -t verxlite/api:${{ github.sha }} .
+          docker tag verxlite/api:${{ github.sha }} verxlite/api:latest
+          docker push verxlite/api:${{ github.sha }}
+          docker push verxlite/api:latest
+
+      - name: Build and push Worker image
+        run: |
+          cd worker
+          docker build -t verxlite/worker:${{ github.sha }} .
+          docker tag verxlite/worker:${{ github.sha }} verxlite/worker:latest
+          docker push verxlite/worker:${{ github.sha }}
+          docker push verxlite/worker:latest
+
+      - name: Build and push Web image
+        run: |
+          cd web
+          docker build -t verxlite/web:${{ github.sha }} .
+          docker tag verxlite/web:${{ github.sha }} verxlite/web:latest
+          docker push verxlite/web:${{ github.sha }}
+          docker push verxlite/web:latest
+
+  deploy:
+    name: Deploy to Production
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Flyctl
+        run: curl -L https://fly.io/install.sh | sh
+
+      - name: Deploy API
+        run: flyctl deploy --app verxlite-api --image verxlite/api:latest
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Deploy Worker
+        run: flyctl deploy --app verxlite-worker --image verxlite/worker:latest
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Deploy Web
+        run: flyctl deploy --app verxlite-web --image verxlite/web:latest
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
