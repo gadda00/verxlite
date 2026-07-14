@@ -2,14 +2,16 @@
 Artifact Schemas
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 class ArtifactType(str, Enum):
     """Artifact type enum."""
+
     CRM_NOTE = "crm_note"
     CRM_TASK = "crm_task"
     CRM_DEAL = "crm_deal"
@@ -27,6 +29,7 @@ class ArtifactType(str, Enum):
 
 class ArtifactStatus(str, Enum):
     """Artifact status enum."""
+
     CREATED = "created"
     PENDING = "pending"
     COMPLETED = "completed"
@@ -36,19 +39,20 @@ class ArtifactStatus(str, Enum):
 
 class ArtifactResponse(BaseModel):
     """Artifact response model."""
+
     id: str
     run_id: str
     artifact_type: ArtifactType
-    external_id: Optional[str] = None
-    external_url: Optional[str] = None
+    external_id: str | None = None
+    external_url: str | None = None
     status: ArtifactStatus
-    content_summary: Optional[str] = None
-    content_data: Dict[str, Any]
-    extra_metadata: Dict[str, Any]
-    parent_artifact_id: Optional[str] = None
-    size_bytes: Optional[int] = None
-    mime_type: Optional[str] = None
-    file_name: Optional[str] = None
+    content_summary: str | None = None
+    content_data: dict[str, Any]
+    extra_metadata: dict[str, Any]
+    parent_artifact_id: str | None = None
+    size_bytes: int | None = None
+    mime_type: str | None = None
+    file_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -62,14 +66,15 @@ class ArtifactResponse(BaseModel):
                 "external_url": "https://hubspot.com/note/123",
                 "status": "completed",
                 "content_summary": "Meeting summary",
-                "created_at": "2024-01-01T12:00:00Z"
+                "created_at": "2024-01-01T12:00:00Z",
             }
         }
 
 
 class ArtifactListResponse(BaseModel):
     """List of artifacts response."""
-    artifacts: List[ArtifactResponse]
+
+    artifacts: list[ArtifactResponse]
     total: int
     page: int = 1
     page_size: int = 100
@@ -78,29 +83,26 @@ class ArtifactListResponse(BaseModel):
         json_schema_extra = {
             "example": {
                 "artifacts": [
-                    {
-                        "id": "artifact_abc123",
-                        "artifact_type": "crm_note",
-                        "status": "completed"
-                    }
+                    {"id": "artifact_abc123", "artifact_type": "crm_note", "status": "completed"}
                 ],
                 "total": 1,
                 "page": 1,
-                "page_size": 100
+                "page_size": 100,
             }
         }
 
 
 class ArtifactCreate(BaseModel):
     """Artifact creation request."""
+
     run_id: str = Field(..., description="ID of workflow run")
     artifact_type: ArtifactType = Field(..., description="Type of artifact")
-    external_id: Optional[str] = Field(None, description="External ID")
-    external_url: Optional[str] = Field(None, description="External URL")
-    content_summary: Optional[str] = Field(None, description="Content summary")
-    content_data: Dict[str, Any] = Field(default_factory=dict, description="Content data")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata")
-    parent_artifact_id: Optional[str] = Field(None, description="Parent artifact ID")
+    external_id: str | None = Field(None, description="External ID")
+    external_url: str | None = Field(None, description="External URL")
+    content_summary: str | None = Field(None, description="Content summary")
+    content_data: dict[str, Any] = Field(default_factory=dict, description="Content data")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Metadata")
+    parent_artifact_id: str | None = Field(None, description="Parent artifact ID")
 
     class Config:
         json_schema_extra = {
@@ -108,6 +110,6 @@ class ArtifactCreate(BaseModel):
                 "run_id": "run_abc123",
                 "artifact_type": "crm_note",
                 "external_url": "https://hubspot.com/note/123",
-                "content_summary": "Meeting summary"
+                "content_summary": "Meeting summary",
             }
         }

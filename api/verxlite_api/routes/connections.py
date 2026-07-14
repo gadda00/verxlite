@@ -6,26 +6,26 @@ OAuth state is stored in Redis (with TTL) when available, falling back to an
 in-memory dict for tests.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from fastapi.responses import RedirectResponse
-from typing import Optional
-from datetime import datetime, timedelta, timezone
-import httpx
-import secrets
 import json
+import secrets
+from datetime import datetime, timedelta, timezone
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import RedirectResponse
 
 from verxlite_api.config import settings
 from verxlite_api.db.session import get_db
-from verxlite_api.models.user import User
+from verxlite_api.deps import get_current_user
 from verxlite_api.models.connection import Connection
+from verxlite_api.models.user import User
 from verxlite_api.schemas.connection import (
-    ConnectionResponse,
     ConnectionListResponse,
+    ConnectionResponse,
     OAuthStateResponse,
 )
+from verxlite_api.utils.encryption import decrypt_data, encrypt_data
 from verxlite_api.utils.logger import get_logger
-from verxlite_api.utils.encryption import encrypt_data, decrypt_data
-from verxlite_api.deps import get_current_user
 
 router = APIRouter(tags=["connections"])
 logger = get_logger("connections")
@@ -42,6 +42,7 @@ class _OAuthStateStore:
         self._redis = None
         try:
             import redis  # type: ignore
+
             self._redis = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
             self._redis.ping()
         except Exception:
@@ -54,7 +55,7 @@ class _OAuthStateStore:
         else:
             self._in_memory[state] = data
 
-    def pop(self, state: str) -> Optional[dict]:
+    def pop(self, state: str) -> dict | None:
         if self._redis:
             payload = self._redis.get(f"oauth:state:{state}")
             if not payload:
@@ -85,9 +86,9 @@ class PaginationParams:
 async def list_connections(
     request: Request,
     pagination: PaginationParams = Depends(),
-    provider: Optional[str] = Query(None),
-    is_active: Optional[bool] = Query(None),
-    is_expired: Optional[bool] = Query(None),
+    provider: str | None = Query(None),
+    is_active: bool | None = Query(None),
+    is_expired: bool | None = Query(None),
     db=Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -106,9 +107,7 @@ async def list_connections(
         if is_expired:
             query = query.filter(Connection.expires_at < now)
         else:
-            query = query.filter(
-                (Connection.expires_at > now) | (Connection.expires_at.is_(None))
-            )
+            query = query.filter((Connection.expires_at > now) | (Connection.expires_at.is_(None)))
 
     total = query.count()
     connections = (
@@ -133,13 +132,19 @@ async def get_connection(
     current_user: User = Depends(get_current_user),
 ):
     """Get a specific connection by ID."""
-    connection = db.query(Connection).filter(
-        Connection.id == connection_id,
-        Connection.user_id == current_user.id,
-        Connection.tenant_id == current_user.tenant_id,
-    ).first()
+    connection = (
+        db.query(Connection)
+        .filter(
+            Connection.id == connection_id,
+            Connection.user_id == current_user.id,
+            Connection.tenant_id == current_user.tenant_id,
+        )
+        .first()
+    )
     if not connection:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Connection not found: {connection_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Connection not found: {connection_id}"
+        )
     return ConnectionResponse.model_validate(connection)
 
 
@@ -150,13 +155,19 @@ async def delete_connection(
     current_user: User = Depends(get_current_user),
 ):
     """Soft-delete a connection: deactivate and clear tokens."""
-    connection = db.query(Connection).filter(
-        Connection.id == connection_id,
-        Connection.user_id == current_user.id,
-        Connection.tenant_id == current_user.tenant_id,
-    ).first()
+    connection = (
+        db.query(Connection)
+        .filter(
+            Connection.id == connection_id,
+            Connection.user_id == current_user.id,
+            Connection.tenant_id == current_user.tenant_id,
+        )
+        .first()
+    )
     if not connection:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Connection not found: {connection_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Connection not found: {connection_id}"
+        )
 
     connection.is_active = False
     # Clear tokens so they cannot be reused if the row is reactivated.
@@ -173,15 +184,23 @@ async def refresh_connection(
     current_user: User = Depends(get_current_user),
 ):
     """Refresh an OAuth connection's access token."""
-    connection = db.query(Connection).filter(
-        Connection.id == connection_id,
-        Connection.user_id == current_user.id,
-        Connection.tenant_id == current_user.tenant_id,
-    ).first()
+    connection = (
+        db.query(Connection)
+        .filter(
+            Connection.id == connection_id,
+            Connection.user_id == current_user.id,
+            Connection.tenant_id == current_user.tenant_id,
+        )
+        .first()
+    )
     if not connection:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Connection not found: {connection_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Connection not found: {connection_id}"
+        )
     if not connection.refresh_token:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No refresh token available")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No refresh token available"
+        )
 
     refresh_token = decrypt_data(connection.refresh_token)
 
@@ -202,7 +221,10 @@ async def refresh_connection(
             "refresh_token": refresh_token,
         }
     else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported provider: {connection.provider}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported provider: {connection.provider}",
+        )
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -250,10 +272,15 @@ async def authorize_google(
 ):
     """Start the Google OAuth flow."""
     if not settings.GOOGLE_CLIENT_ID:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google OAuth not configured")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Google OAuth not configured"
+        )
 
     state = secrets.token_urlsafe(32)
-    _oauth_states.set(state, {"user_id": current_user.id, "tenant_id": current_user.tenant_id, "provider": "google"})
+    _oauth_states.set(
+        state,
+        {"user_id": current_user.id, "tenant_id": current_user.tenant_id, "provider": "google"},
+    )
 
     params = {
         "client_id": settings.GOOGLE_CLIENT_ID,
@@ -265,6 +292,7 @@ async def authorize_google(
         "state": state,
     }
     from urllib.parse import urlencode
+
     redirect_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
     return OAuthStateResponse(state=state, provider="google", redirect_url=redirect_url)
 
@@ -279,7 +307,9 @@ async def google_callback(
     """Handle the Google OAuth callback."""
     state_data = _oauth_states.pop(state)
     if not state_data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state"
+        )
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -295,7 +325,9 @@ async def google_callback(
         )
         if response.status_code != 200:
             logger.error(f"Google token exchange failed: {response.text}")
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange Google code")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange Google code"
+            )
         token_data = response.json()
 
         # Fetch user info
@@ -312,7 +344,9 @@ async def google_callback(
         provider="google",
         provider_user_id=user_info.get("id"),
         access_token=encrypt_data(token_data["access_token"]),
-        refresh_token=encrypt_data(token_data["refresh_token"]) if token_data.get("refresh_token") else None,
+        refresh_token=encrypt_data(token_data["refresh_token"])
+        if token_data.get("refresh_token")
+        else None,
         token_type=token_data.get("token_type", "Bearer"),
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=max(expires_in - 60, 60)),
         scope=",".join(GOOGLE_SCOPES),
@@ -346,12 +380,18 @@ async def authorize_hubspot(
 ):
     """Start the HubSpot OAuth flow."""
     if not settings.HUBSPOT_CLIENT_ID:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="HubSpot OAuth not configured")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="HubSpot OAuth not configured"
+        )
 
     state = secrets.token_urlsafe(32)
-    _oauth_states.set(state, {"user_id": current_user.id, "tenant_id": current_user.tenant_id, "provider": "hubspot"})
+    _oauth_states.set(
+        state,
+        {"user_id": current_user.id, "tenant_id": current_user.tenant_id, "provider": "hubspot"},
+    )
 
     from urllib.parse import urlencode
+
     params = {
         "client_id": settings.HUBSPOT_CLIENT_ID,
         "redirect_uri": settings.HUBSPOT_REDIRECT_URI,
@@ -373,7 +413,9 @@ async def hubspot_callback(
     """Handle the HubSpot OAuth callback."""
     state_data = _oauth_states.pop(state)
     if not state_data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state"
+        )
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -389,7 +431,9 @@ async def hubspot_callback(
         )
         if response.status_code != 200:
             logger.error(f"HubSpot token exchange failed: {response.text}")
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange HubSpot code")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange HubSpot code"
+            )
         token_data = response.json()
 
         # Fetch token info to get the HubSpot user ID

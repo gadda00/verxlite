@@ -2,14 +2,16 @@
 Artifact Model
 """
 
-from sqlalchemy import Column, String, Text, ForeignKey, JSON, DateTime, Index, Enum, Integer
-from sqlalchemy.orm import relationship
 from enum import Enum as PyEnum
+
+from sqlalchemy import JSON, Column, Enum, ForeignKey, Index, Integer, String, Text
+
 from verxlite_api.db.base import BaseModel
 
 
 class ArtifactType(PyEnum):
     """Type of artifact."""
+
     CRM_NOTE = "crm_note"
     CRM_TASK = "crm_task"
     CRM_DEAL = "crm_deal"
@@ -27,6 +29,7 @@ class ArtifactType(PyEnum):
 
 class ArtifactStatus(PyEnum):
     """Status of an artifact."""
+
     CREATED = "created"
     PENDING = "pending"
     COMPLETED = "completed"
@@ -37,7 +40,7 @@ class ArtifactStatus(PyEnum):
 class Artifact(BaseModel):
     """
     Represents an artifact created by a workflow (CRM note, email draft, task, etc.).
-    
+
     Attributes:
         run_id: Workflow run that created this artifact
         artifact_type: Type of artifact (from ArtifactType enum)
@@ -51,6 +54,7 @@ class Artifact(BaseModel):
         size_bytes: Size of the artifact in bytes (for files)
         mime_type: MIME type of the artifact (for files)
     """
+
     __tablename__ = "artifacts"
     __table_args__ = (
         Index("ix_artifact_run", "run_id"),
@@ -60,31 +64,43 @@ class Artifact(BaseModel):
         Index("ix_artifact_created", "created_at"),
     )
 
-    run_id = Column(String(36), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True)
-    
+    run_id = Column(
+        String(36), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
     # Artifact information
     artifact_type = Column(
-        Enum(ArtifactType, name="artifact_type_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
-        nullable=False
+        Enum(
+            ArtifactType,
+            name="artifact_type_enum",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
     )
     external_id = Column(String(255), nullable=True)  # ID from the external system
     external_url = Column(Text, nullable=True)  # Deep link to the artifact
     status = Column(
-        Enum(ArtifactStatus, name="artifact_status_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
+        Enum(
+            ArtifactStatus,
+            name="artifact_status_enum",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         default=ArtifactStatus.CREATED,
-        nullable=False
+        nullable=False,
     )
-    
+
     # Content (sanitized)
     content_summary = Column(Text, nullable=True)
     content_data = Column(JSON, nullable=True, default=dict)
-    
+
     # Metadata
     extra_metadata = Column(JSON, nullable=True, default=dict)
-    
+
     # Hierarchy
     parent_artifact_id = Column(String(36), ForeignKey("artifacts.id"), nullable=True)
-    
+
     # File information (for file artifacts)
     size_bytes = Column(Integer, nullable=True)
     mime_type = Column(String(100), nullable=True)

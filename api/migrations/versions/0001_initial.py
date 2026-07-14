@@ -5,8 +5,8 @@ Revises:
 Create Date: 2026-07-14
 
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "0001"
@@ -29,8 +29,12 @@ def upgrade():
         sa.Column("subscription_status", sa.String(50), nullable=False, server_default="trial"),
         sa.Column("trial_ends_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("settings", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_tenant_name", "tenants", ["name"], unique=True)
     op.create_index("ix_tenant_domain", "tenants", ["domain"], unique=True)
@@ -40,7 +44,12 @@ def upgrade():
     op.create_table(
         "users",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            sa.String(36),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("email", sa.String(255), nullable=False),
         sa.Column("first_name", sa.String(100), nullable=True),
         sa.Column("last_name", sa.String(100), nullable=True),
@@ -54,8 +63,12 @@ def upgrade():
         sa.Column("phone", sa.String(50), nullable=True),
         sa.Column("timezone", sa.String(50), nullable=False, server_default="UTC"),
         sa.Column("preferences", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_user_email", "users", ["email"], unique=True)
     op.create_index("ix_user_tenant", "users", ["tenant_id"])
@@ -66,8 +79,15 @@ def upgrade():
     op.create_table(
         "connections",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            sa.String(36),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("provider", sa.String(50), nullable=False),
         sa.Column("provider_user_id", sa.String(255), nullable=True),
         sa.Column("access_token", sa.Text(), nullable=True),
@@ -80,8 +100,12 @@ def upgrade():
         sa.Column("last_sync_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("sync_status", sa.String(20), nullable=True),
         sa.Column("sync_error", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_connection_tenant", "connections", ["tenant_id"])
     op.create_index("ix_connection_user", "connections", ["user_id"])
@@ -93,27 +117,56 @@ def upgrade():
     op.create_table(
         "workflows",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("created_by", sa.String(36), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+        sa.Column(
+            "tenant_id",
+            sa.String(36),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "created_by",
+            sa.String(36),
+            sa.ForeignKey("users.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("workflow_type", sa.Enum(
-            "post_meeting_followup", "lead_assignment", "support_triage",
-            "approval_workflow", "weekly_summary", "custom",
-            name="workflow_type_enum",
-        ), nullable=False),
+        sa.Column(
+            "workflow_type",
+            sa.Enum(
+                "post_meeting_followup",
+                "lead_assignment",
+                "support_triage",
+                "approval_workflow",
+                "weekly_summary",
+                "custom",
+                name="workflow_type_enum",
+            ),
+            nullable=False,
+        ),
         sa.Column("config", sa.JSON(), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
-        sa.Column("status", sa.Enum(
-            "draft", "active", "inactive", "archived",
-            name="workflow_status_enum",
-        ), nullable=False),
+        sa.Column(
+            "status",
+            sa.Enum(
+                "draft",
+                "active",
+                "inactive",
+                "archived",
+                name="workflow_status_enum",
+            ),
+            nullable=False,
+        ),
         sa.Column("trigger_config", sa.JSON(), nullable=True),
         sa.Column("template_id", sa.String(36), nullable=True),
         sa.Column("version", sa.String(50), nullable=False, server_default="1.0"),
         sa.Column("priority", sa.Integer(), nullable=False, server_default="5"),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_workflow_tenant", "workflows", ["tenant_id"])
     op.create_index("ix_workflow_type", "workflows", ["workflow_type"])
@@ -125,21 +178,52 @@ def upgrade():
     op.create_table(
         "workflow_runs",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("workflow_id", sa.String(36), sa.ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("trigger_type", sa.Enum(
-            "manual", "calendar_event_ended", "calendar_event_started",
-            "email_received", "email_sent", "crm_event", "webhook",
-            "scheduled", "api_call",
-            name="workflow_run_trigger_type_enum",
-        ), nullable=False),
+        sa.Column(
+            "tenant_id",
+            sa.String(36),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        ),
+        sa.Column(
+            "workflow_id",
+            sa.String(36),
+            sa.ForeignKey("workflows.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column(
+            "trigger_type",
+            sa.Enum(
+                "manual",
+                "calendar_event_ended",
+                "calendar_event_started",
+                "email_received",
+                "email_sent",
+                "crm_event",
+                "webhook",
+                "scheduled",
+                "api_call",
+                name="workflow_run_trigger_type_enum",
+            ),
+            nullable=False,
+        ),
         sa.Column("trigger_data", sa.JSON(), nullable=True),
-        sa.Column("status", sa.Enum(
-            "pending", "queued", "running", "completed", "failed",
-            "cancelled", "timeout",
-            name="workflow_run_status_enum",
-        ), nullable=False),
+        sa.Column(
+            "status",
+            sa.Enum(
+                "pending",
+                "queued",
+                "running",
+                "completed",
+                "failed",
+                "cancelled",
+                "timeout",
+                name="workflow_run_status_enum",
+            ),
+            nullable=False,
+        ),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("error_stack_trace", sa.Text(), nullable=True),
         sa.Column("total_tokens", sa.Integer(), nullable=False, server_default="0"),
@@ -152,15 +236,21 @@ def upgrade():
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("extra_metadata", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_workflow_run_tenant", "workflow_runs", ["tenant_id"])
     op.create_index("ix_workflow_run_user", "workflow_runs", ["user_id"])
     op.create_index("ix_workflow_run_workflow", "workflow_runs", ["workflow_id"])
     op.create_index("ix_workflow_run_status", "workflow_runs", ["status"])
     op.create_index("ix_workflow_run_trigger", "workflow_runs", ["trigger_type"])
-    op.create_index("ix_workflow_run_idempotency", "workflow_runs", ["idempotency_key"], unique=True)
+    op.create_index(
+        "ix_workflow_run_idempotency", "workflow_runs", ["idempotency_key"], unique=True
+    )
     op.create_index("ix_workflow_run_created", "workflow_runs", ["created_at"])
     op.create_index("ix_workflow_run_scheduled", "workflow_runs", ["scheduled_for"])
 
@@ -168,18 +258,42 @@ def upgrade():
     op.create_table(
         "workflow_steps",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("run_id", sa.String(36), sa.ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("step_type", sa.Enum(
-            "trigger", "llm", "tool", "parallel", "branch",
-            "conditional", "wait", "loop",
-            name="workflow_step_type_enum",
-        ), nullable=False),
+        sa.Column(
+            "run_id",
+            sa.String(36),
+            sa.ForeignKey("workflow_runs.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "step_type",
+            sa.Enum(
+                "trigger",
+                "llm",
+                "tool",
+                "parallel",
+                "branch",
+                "conditional",
+                "wait",
+                "loop",
+                name="workflow_step_type_enum",
+            ),
+            nullable=False,
+        ),
         sa.Column("step_name", sa.String(255), nullable=True),
         sa.Column("tool_name", sa.String(255), nullable=True),
-        sa.Column("status", sa.Enum(
-            "pending", "running", "completed", "failed", "skipped", "timeout",
-            name="workflow_step_status_enum",
-        ), nullable=False),
+        sa.Column(
+            "status",
+            sa.Enum(
+                "pending",
+                "running",
+                "completed",
+                "failed",
+                "skipped",
+                "timeout",
+                name="workflow_step_status_enum",
+            ),
+            nullable=False,
+        ),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("error_stack_trace", sa.Text(), nullable=True),
         sa.Column("input_summary", sa.Text(), nullable=True),
@@ -195,8 +309,12 @@ def upgrade():
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("extra_metadata", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_workflow_step_run", "workflow_steps", ["run_id"])
     op.create_index("ix_workflow_step_type", "workflow_steps", ["step_type"])
@@ -209,28 +327,61 @@ def upgrade():
     op.create_table(
         "artifacts",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("run_id", sa.String(36), sa.ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("artifact_type", sa.Enum(
-            "crm_note", "crm_task", "crm_deal", "crm_contact", "crm_company",
-            "email_draft", "email_sent", "document", "file", "summary",
-            "report", "log", "other",
-            name="artifact_type_enum",
-        ), nullable=False),
+        sa.Column(
+            "run_id",
+            sa.String(36),
+            sa.ForeignKey("workflow_runs.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "artifact_type",
+            sa.Enum(
+                "crm_note",
+                "crm_task",
+                "crm_deal",
+                "crm_contact",
+                "crm_company",
+                "email_draft",
+                "email_sent",
+                "document",
+                "file",
+                "summary",
+                "report",
+                "log",
+                "other",
+                name="artifact_type_enum",
+            ),
+            nullable=False,
+        ),
         sa.Column("external_id", sa.String(255), nullable=True),
         sa.Column("external_url", sa.Text(), nullable=True),
-        sa.Column("status", sa.Enum(
-            "created", "pending", "completed", "failed", "deleted",
-            name="artifact_status_enum",
-        ), nullable=False),
+        sa.Column(
+            "status",
+            sa.Enum(
+                "created",
+                "pending",
+                "completed",
+                "failed",
+                "deleted",
+                name="artifact_status_enum",
+            ),
+            nullable=False,
+        ),
         sa.Column("content_summary", sa.Text(), nullable=True),
         sa.Column("content_data", sa.JSON(), nullable=True),
         sa.Column("extra_metadata", sa.JSON(), nullable=True),
-        sa.Column("parent_artifact_id", sa.String(36), sa.ForeignKey("artifacts.id"), nullable=True),
+        sa.Column(
+            "parent_artifact_id", sa.String(36), sa.ForeignKey("artifacts.id"), nullable=True
+        ),
         sa.Column("size_bytes", sa.Integer(), nullable=True),
         sa.Column("mime_type", sa.String(100), nullable=True),
         sa.Column("file_name", sa.String(255), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_artifact_run", "artifacts", ["run_id"])
     op.create_index("ix_artifact_type", "artifacts", ["artifact_type"])

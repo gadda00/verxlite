@@ -2,15 +2,16 @@
 Google Connector
 """
 
-from typing import Dict, Any, Optional, List
-import httpx
 from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import httpx
 
 from verxlite_api.config import settings
 from verxlite_api.db.session import session
 from verxlite_api.models.connection import Connection
+from verxlite_api.utils.encryption import decrypt_data, encrypt_data
 from verxlite_api.utils.logger import get_logger
-from verxlite_api.utils.encryption import encrypt_data, decrypt_data
 
 logger = get_logger("google_connector")
 
@@ -26,12 +27,12 @@ class GoogleConnector:
         "drive": "https://www.googleapis.com/drive/v3",
     }
 
-    def __init__(self, connection_id: str, tenant_id: Optional[str] = None):
+    def __init__(self, connection_id: str, tenant_id: str | None = None):
         self.db = session()
         self.connection = self._get_connection(connection_id, tenant_id)
         self.access_token = self._get_access_token()
 
-    def _get_connection(self, connection_id: str, tenant_id: Optional[str] = None) -> Connection:
+    def _get_connection(self, connection_id: str, tenant_id: str | None = None) -> Connection:
         """Get the Google connection from the database (scoped to tenant)."""
         query = self.db.query(Connection).filter(
             Connection.id == connection_id,
@@ -83,7 +84,7 @@ class GoogleConnector:
             self.access_token = new_access_token
             return new_access_token
 
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/json",
@@ -96,12 +97,10 @@ class GoogleConnector:
             if response.status_code == 401:
                 # Token expired, refresh and retry once.
                 await self._refresh_access_token()
-                response = await client.request(
-                    method, url, headers=self._get_headers(), **kwargs
-                )
+                response = await client.request(method, url, headers=self._get_headers(), **kwargs)
             return response
 
-    async def get_calendar_event(self, event_id: str) -> Dict[str, Any]:
+    async def get_calendar_event(self, event_id: str) -> dict[str, Any]:
         url = f"{self.BASE_URLS['calendar']}/calendars/primary/events/{event_id}"
         response = await self._request("GET", url)
         if response.status_code != 200:
@@ -110,12 +109,12 @@ class GoogleConnector:
 
     async def list_calendar_events(
         self,
-        time_min: Optional[datetime] = None,
-        time_max: Optional[datetime] = None,
+        time_min: datetime | None = None,
+        time_max: datetime | None = None,
         max_results: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         url = f"{self.BASE_URLS['calendar']}/calendars/primary/events"
-        params: Dict[str, Any] = {"maxResults": max_results}
+        params: dict[str, Any] = {"maxResults": max_results}
         if time_min:
             params["timeMin"] = time_min.isoformat() + "Z"
         if time_max:
@@ -125,14 +124,14 @@ class GoogleConnector:
             raise ValueError(f"Failed to list calendar events: {response.status_code}")
         return response.json().get("items", [])
 
-    async def get_email_thread(self, thread_id: str) -> Dict[str, Any]:
+    async def get_email_thread(self, thread_id: str) -> dict[str, Any]:
         url = f"{self.BASE_URLS['gmail']}/gmail/v1/users/me/threads/{thread_id}"
         response = await self._request("GET", url)
         if response.status_code != 200:
             raise ValueError(f"Failed to get email thread: {response.status_code}")
         return response.json()
 
-    async def search_emails(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+    async def search_emails(self, query: str, max_results: int = 10) -> list[dict[str, Any]]:
         url = f"{self.BASE_URLS['gmail']}/gmail/v1/users/me/messages"
         params = {"q": query, "maxResults": max_results}
         response = await self._request("GET", url, params=params)
@@ -140,7 +139,7 @@ class GoogleConnector:
             raise ValueError(f"Failed to search emails: {response.status_code}")
         return response.json().get("messages", [])
 
-    async def create_draft_email(self, to: str, subject: str, body: str) -> Dict[str, Any]:
+    async def create_draft_email(self, to: str, subject: str, body: str) -> dict[str, Any]:
         url = f"{self.BASE_URLS['gmail']}/gmail/v1/users/me/drafts"
         raw_email = self._create_raw_email({"to": to, "subject": subject, "body": body})
         payload = {"raw": raw_email}
@@ -150,7 +149,7 @@ class GoogleConnector:
         return response.json()
 
     @staticmethod
-    def _create_raw_email(email_data: Dict[str, Any]) -> str:
+    def _create_raw_email(email_data: dict[str, Any]) -> str:
         import base64
         from email.mime.text import MIMEText
 

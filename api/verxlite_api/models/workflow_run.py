@@ -2,14 +2,17 @@
 WorkflowRun Model
 """
 
-from sqlalchemy import Column, String, Text, Boolean, ForeignKey, JSON, Integer, Float, DateTime, Index, Enum
-from sqlalchemy.orm import relationship
 from enum import Enum as PyEnum
+
+from sqlalchemy import JSON, Column, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.orm import relationship
+
 from verxlite_api.db.base import BaseModel
 
 
 class WorkflowRunStatus(PyEnum):
     """Status of a workflow run."""
+
     PENDING = "pending"
     QUEUED = "queued"
     RUNNING = "running"
@@ -21,6 +24,7 @@ class WorkflowRunStatus(PyEnum):
 
 class WorkflowRunTriggerType(PyEnum):
     """Type of trigger for a workflow run."""
+
     MANUAL = "manual"
     CALENDAR_EVENT_ENDED = "calendar_event_ended"
     CALENDAR_EVENT_STARTED = "calendar_event_started"
@@ -35,7 +39,7 @@ class WorkflowRunTriggerType(PyEnum):
 class WorkflowRun(BaseModel):
     """
     Represents a single execution of a workflow.
-    
+
     Attributes:
         tenant_id: Tenant this run belongs to
         user_id: User who triggered this run
@@ -55,6 +59,7 @@ class WorkflowRun(BaseModel):
         completed_at: When the run completed
         metadata: Additional metadata for the run
     """
+
     __tablename__ = "workflow_runs"
     __table_args__ = (
         Index("ix_workflow_run_tenant", "tenant_id"),
@@ -67,43 +72,55 @@ class WorkflowRun(BaseModel):
         Index("ix_workflow_run_scheduled", "scheduled_for"),
     )
 
-    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     workflow_id = Column(String(36), ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True)
-    
+
     # Trigger information
     trigger_type = Column(
-        Enum(WorkflowRunTriggerType, name="workflow_run_trigger_type_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
-        nullable=False
+        Enum(
+            WorkflowRunTriggerType,
+            name="workflow_run_trigger_type_enum",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
     )
     trigger_data = Column(JSON, nullable=True, default=dict)  # e.g., {event_id: 'abc123'}
-    
+
     # Execution status
     status = Column(
-        Enum(WorkflowRunStatus, name="workflow_run_status_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
+        Enum(
+            WorkflowRunStatus,
+            name="workflow_run_status_enum",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         default=WorkflowRunStatus.PENDING,
-        nullable=False
+        nullable=False,
     )
     error_message = Column(Text, nullable=True)
     error_stack_trace = Column(Text, nullable=True)
-    
+
     # Performance metrics
     total_tokens = Column(Integer, default=0, nullable=False)
     total_duration_ms = Column(Integer, default=0, nullable=False)
     total_cost = Column(Float, default=0.0, nullable=False)
-    
+
     # Idempotency
     idempotency_key = Column(String(255), nullable=True, unique=True)
-    
+
     # Retry information
     parent_run_id = Column(String(36), ForeignKey("workflow_runs.id"), nullable=True)
     retry_count = Column(Integer, default=0, nullable=False)
-    
+
     # Timing
     scheduled_for = Column(DateTime, nullable=True)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
-    
+
     # Metadata
     extra_metadata = Column(JSON, nullable=True, default=dict)
 

@@ -5,17 +5,18 @@ Uses Fernet symmetric encryption. The key is provided by Settings.ENCRYPTION_KEY
 (or derived deterministically from JWT_SECRET in dev — see config.get_encryption_key).
 """
 
+
 from cryptography.fernet import Fernet
-from typing import Union
 
 
-def _get_fernet(key: Union[str, bytes, None] = None) -> Fernet:
+def _get_fernet(key: str | bytes | None = None) -> Fernet:
     """
     Build a Fernet instance from a key string (or pull the configured key).
     """
     if key is None:
         # Lazy import to avoid circular dependency at module load time.
         from verxlite_api.config import settings
+
         key = settings.get_encryption_key()
     if isinstance(key, str):
         key = key.encode()
@@ -29,7 +30,7 @@ def generate_key() -> str:
     return Fernet.generate_key().decode()
 
 
-def encrypt_data(data: str, key: Union[str, bytes, None] = None) -> str:
+def encrypt_data(data: str, key: str | bytes | None = None) -> str:
     """
     Encrypt a UTF-8 string and return a URL-safe string safe to store in a TEXT column.
     """
@@ -40,7 +41,7 @@ def encrypt_data(data: str, key: Union[str, bytes, None] = None) -> str:
     return encrypted.decode("ascii")
 
 
-def decrypt_data(encrypted_data: str, key: Union[str, bytes, None] = None) -> str:
+def decrypt_data(encrypted_data: str, key: str | bytes | None = None) -> str:
     """
     Decrypt a string previously produced by :func:`encrypt_data`.
     """

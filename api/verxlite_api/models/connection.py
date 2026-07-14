@@ -2,17 +2,17 @@
 Connection Model
 """
 
-from sqlalchemy import Column, String, Text, DateTime, Boolean, ForeignKey, JSON, Index
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import expression
+
 from verxlite_api.db.base import BaseModel
-from verxlite_api.utils.encryption import encrypt_data, decrypt_data
+from verxlite_api.utils.encryption import decrypt_data, encrypt_data
 
 
 class Connection(BaseModel):
     """
     Represents an OAuth connection to an external service (Google, HubSpot, etc.).
-    
+
     Attributes:
         tenant_id: Tenant this connection belongs to
         user_id: User who owns this connection
@@ -29,6 +29,7 @@ class Connection(BaseModel):
         sync_status: Status of last sync (success, failed, pending)
         sync_error: Error message from last sync
     """
+
     __tablename__ = "connections"
     __table_args__ = (
         Index("ix_connection_tenant", "tenant_id"),
@@ -38,8 +39,12 @@ class Connection(BaseModel):
         Index("ix_connection_expires", "expires_at"),
     )
 
-    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id = Column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     provider = Column(String(50), nullable=False)  # google, hubspot, salesforce, outlook, etc.
     provider_user_id = Column(String(255), nullable=True)
     access_token = Column(Text, nullable=True)
@@ -99,6 +104,7 @@ class Connection(BaseModel):
         if not self.expires_at:
             return True
         from datetime import datetime, timezone
+
         # Make both sides timezone-aware before comparing.
         expires = self.expires_at
         if expires.tzinfo is None:

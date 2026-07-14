@@ -6,13 +6,14 @@ The engine accepts an optional `run_id` so the API can pre-create a run and the
 worker can execute the same run (instead of each generating its own).
 """
 
-from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
-import uuid
 import time
+import uuid
+from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy.orm import Session
 
+from verxlite_api.models.artifact import Artifact, ArtifactStatus, ArtifactType
 from verxlite_api.models.workflow import Workflow, WorkflowType
 from verxlite_api.models.workflow_run import WorkflowRun, WorkflowRunStatus
 from verxlite_api.models.workflow_step import (
@@ -20,7 +21,6 @@ from verxlite_api.models.workflow_step import (
     WorkflowStepStatus,
     WorkflowStepType,
 )
-from verxlite_api.models.artifact import Artifact, ArtifactType, ArtifactStatus
 from verxlite_api.utils.logger import get_logger
 
 logger = get_logger("workflow_engine")
@@ -35,9 +35,9 @@ class WorkflowStepResult:
         step_type: str,
         step_name: str,
         status: str,
-        input_data: Optional[Dict[str, Any]] = None,
-        output_data: Optional[Dict[str, Any]] = None,
-        error_message: Optional[str] = None,
+        input_data: dict[str, Any] | None = None,
+        output_data: dict[str, Any] | None = None,
+        error_message: str | None = None,
         latency_ms: int = 0,
         tokens_used: int = 0,
     ):
@@ -55,10 +55,11 @@ class WorkflowStepResult:
 class WorkflowEngine:
     """Executes workflows with steps (LLM, tool, parallel, branch)."""
 
-    def __init__(self, db: Optional[Session] = None):
+    def __init__(self, db: Session | None = None):
         # Use injected session if provided (preferred — easier to test & scope).
         if db is None:
             from verxlite_api.db.session import session as _session
+
             db = _session()
         self.db = db
 
@@ -68,17 +69,21 @@ class WorkflowEngine:
         tenant_id: str,
         user_id: str,
         trigger_type: str,
-        trigger_data: Optional[Dict[str, Any]] = None,
-        run_id: Optional[str] = None,
+        trigger_data: dict[str, Any] | None = None,
+        run_id: str | None = None,
     ) -> WorkflowRun:
         """Execute a workflow. If `run_id` is provided, update that run; else create a new one."""
         logger.info(f"Executing workflow: {workflow_id} (run_id={run_id})")
 
         # Get workflow
-        workflow = self.db.query(Workflow).filter(
-            Workflow.id == workflow_id,
-            Workflow.tenant_id == tenant_id,
-        ).first()
+        workflow = (
+            self.db.query(Workflow)
+            .filter(
+                Workflow.id == workflow_id,
+                Workflow.tenant_id == tenant_id,
+            )
+            .first()
+        )
         if not workflow:
             raise ValueError(f"Workflow not found: {workflow_id}")
 
@@ -126,7 +131,7 @@ class WorkflowEngine:
                 raise ValueError(f"Unsupported workflow type: {workflow.workflow_type}")
 
             # Execute each step, threading outputs into the next step's inputs.
-            context: Dict[str, Any] = {"trigger_data": trigger_data}
+            context: dict[str, Any] = {"trigger_data": trigger_data}
             total_tokens = 0
             start_time = time.time()
 
@@ -173,8 +178,8 @@ class WorkflowEngine:
     # Step definitions per workflow type.
     # ------------------------------------------------------------------ #
     def _get_post_meeting_followup_steps(
-        self, workflow_run: WorkflowRun, trigger_data: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, workflow_run: WorkflowRun, trigger_data: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         event_id = trigger_data.get("event_id")
         return [
             {
@@ -232,8 +237,8 @@ class WorkflowEngine:
         ]
 
     def _get_lead_assignment_steps(
-        self, workflow_run: WorkflowRun, trigger_data: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, workflow_run: WorkflowRun, trigger_data: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "step_type": "llm",
@@ -252,8 +257,8 @@ class WorkflowEngine:
         ]
 
     def _get_support_triage_steps(
-        self, workflow_run: WorkflowRun, trigger_data: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, workflow_run: WorkflowRun, trigger_data: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "step_type": "llm",
@@ -265,8 +270,8 @@ class WorkflowEngine:
         ]
 
     def _get_weekly_summary_steps(
-        self, workflow_run: WorkflowRun, trigger_data: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, workflow_run: WorkflowRun, trigger_data: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "step_type": "llm",
@@ -280,14 +285,14 @@ class WorkflowEngine:
     # ------------------------------------------------------------------ #
     # Step execution.
     # ------------------------------------------------------------------ #
-    def _resolve_input(self, step_def: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    def _resolve_input(self, step_def: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         """
         Build the input dict for a step.
 
         - `input`: literal values (may include None placeholders).
         - `input_from`: dotted paths into the context, e.g. "calendar_event.attendees.0.email".
         """
-        resolved: Dict[str, Any] = {}
+        resolved: dict[str, Any] = {}
         for k, v in (step_def.get("input") or {}).items():
             resolved[k] = v
         for k, path in (step_def.get("input_from") or {}).items():
@@ -295,7 +300,7 @@ class WorkflowEngine:
         return resolved
 
     @staticmethod
-    def _lookup(context: Dict[str, Any], path: str) -> Any:
+    def _lookup(context: dict[str, Any], path: str) -> Any:
         """Resolve a dotted path like 'calendar_event.attendees.0.email' against the context."""
         current: Any = context
         for part in path.split("."):
@@ -318,9 +323,9 @@ class WorkflowEngine:
     def _execute_step(
         self,
         workflow_run: WorkflowRun,
-        step_def: Dict[str, Any],
+        step_def: dict[str, Any],
         order: int,
-        context: Dict[str, Any],
+        context: dict[str, Any],
     ) -> WorkflowStepResult:
         step_id = str(uuid.uuid4())
         step_type = step_def.get("step_type", "tool")
@@ -329,7 +334,9 @@ class WorkflowEngine:
         step = WorkflowStep(
             id=step_id,
             run_id=workflow_run.id,
-            step_type=WorkflowStepType(step_type) if step_type in [t.value for t in WorkflowStepType] else WorkflowStepType.TOOL,
+            step_type=WorkflowStepType(step_type)
+            if step_type in [t.value for t in WorkflowStepType]
+            else WorkflowStepType.TOOL,
             step_name=step_name,
             tool_name=step_def.get("tool_name"),
             status=WorkflowStepStatus.RUNNING,
@@ -349,7 +356,11 @@ class WorkflowEngine:
             else:
                 raise ValueError(f"Unknown step type: {step_type}")
 
-            step.status = WorkflowStepStatus.COMPLETED if result.status == "completed" else WorkflowStepStatus.FAILED
+            step.status = (
+                WorkflowStepStatus.COMPLETED
+                if result.status == "completed"
+                else WorkflowStepStatus.FAILED
+            )
             step.input_summary = str(result.input_data)[:500] if result.input_data else None
             step.output_summary = str(result.output_data)[:500] if result.output_data else None
             step.error_message = result.error_message
@@ -378,7 +389,9 @@ class WorkflowEngine:
                 latency_ms=latency_ms,
             )
 
-    def _execute_tool_step(self, step_def: Dict[str, Any], context: Dict[str, Any]) -> WorkflowStepResult:
+    def _execute_tool_step(
+        self, step_def: dict[str, Any], context: dict[str, Any]
+    ) -> WorkflowStepResult:
         tool_name = step_def.get("tool_name")
         input_data = self._resolve_input(step_def, context)
         start_time = time.time()
@@ -415,7 +428,9 @@ class WorkflowEngine:
                 latency_ms=latency_ms,
             )
 
-    def _execute_llm_step(self, step_def: Dict[str, Any], context: Dict[str, Any]) -> WorkflowStepResult:
+    def _execute_llm_step(
+        self, step_def: dict[str, Any], context: dict[str, Any]
+    ) -> WorkflowStepResult:
         prompt = step_def.get("prompt", "")
         input_keys = step_def.get("input_keys", [])
         # Build the LLM input from the context.
@@ -455,7 +470,7 @@ class WorkflowEngine:
     # Mock tool dispatcher (dev fallback).
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _dispatch_mock_tool(tool_name: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _dispatch_mock_tool(tool_name: str, input_data: dict[str, Any]) -> dict[str, Any]:
         """Produce deterministic mock output for a tool call.
 
         Real dispatch to Google/HubSpot happens in the worker via dependency
@@ -494,12 +509,23 @@ class WorkflowEngine:
         if tool_name == "draft_email":
             return {"id": f"draft_{uuid.uuid4()}", "to": to, "subject": subject, "body": body}
         if tool_name == "create_crm_task":
-            return {"id": f"task_{uuid.uuid4()}", "contact_id": contact_id, "title": title, "due_date": due_date}
+            return {
+                "id": f"task_{uuid.uuid4()}",
+                "contact_id": contact_id,
+                "title": title,
+                "due_date": due_date,
+            }
         if tool_name == "assign_lead_owner":
-            return {"lead_id": input_data.get("lead_id"), "owner": "rep_1", "score": input_data.get("score", 50)}
+            return {
+                "lead_id": input_data.get("lead_id"),
+                "owner": "rep_1",
+                "score": input_data.get("score", 50),
+            }
         raise ValueError(f"Unknown tool: {tool_name}")
 
-    def _maybe_persist_artifact(self, tool_name: str, output: Dict[str, Any], context: Dict[str, Any]) -> None:
+    def _maybe_persist_artifact(
+        self, tool_name: str, output: dict[str, Any], context: dict[str, Any]
+    ) -> None:
         """Persist certain tool outputs as artifacts."""
         run = context.get("_run_id")
         if not run:
@@ -526,7 +552,7 @@ class WorkflowEngine:
     # ------------------------------------------------------------------ #
     # LLM dispatch (real if configured, mock otherwise).
     # ------------------------------------------------------------------ #
-    def _call_llm(self, prompt: str, input_data: Dict[str, Any]) -> tuple[Dict[str, Any], int]:
+    def _call_llm(self, prompt: str, input_data: dict[str, Any]) -> tuple[dict[str, Any], int]:
         """Call the configured LLM provider. Falls back to a deterministic mock."""
         from verxlite_api.config import settings
 
@@ -538,6 +564,7 @@ class WorkflowEngine:
         if settings.ANTHROPIC_API_KEY:
             try:
                 import anthropic
+
                 client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
                 response = client.messages.create(
                     model="claude-3-haiku-20240307",
@@ -548,6 +575,7 @@ class WorkflowEngine:
                 tokens = (response.usage.input_tokens or 0) + (response.usage.output_tokens or 0)
                 # Try to parse JSON; fall back to wrapping in a dict.
                 import json
+
                 try:
                     parsed = json.loads(text)
                     if isinstance(parsed, dict):
@@ -562,6 +590,7 @@ class WorkflowEngine:
         if settings.OPENAI_API_KEY:
             try:
                 from openai import OpenAI
+
                 client = OpenAI(api_key=settings.OPENAI_API_KEY)
                 response = client.chat.completions.create(
                     model="gpt-3.5-turbo",
@@ -571,6 +600,7 @@ class WorkflowEngine:
                 text = response.choices[0].message.content or ""
                 tokens = response.usage.total_tokens if response.usage else 0
                 import json
+
                 try:
                     parsed = json.loads(text)
                     if isinstance(parsed, dict):

@@ -6,19 +6,18 @@ Provides `get_current_user` for FastAPI dependency injection. Supports two modes
   2. Clerk JWT (production) — verified with settings.CLERK_SECRET_KEY when set.
 """
 
-from fastapi import Depends, HTTPException, status, Request
-from sqlalchemy.orm import Session
-from typing import Optional
 from datetime import datetime, timedelta, timezone
+
 import jwt
+from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy.orm import Session
 
 from verxlite_api.config import settings
 from verxlite_api.db.session import get_db
 from verxlite_api.models.user import User
-from verxlite_api.models.tenant import Tenant
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """Create a JWT access token (email/password mode)."""
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (
@@ -121,16 +120,18 @@ def get_current_admin(user: User = Depends(get_current_user)) -> User:
 def hash_password(password: str) -> str:
     """Hash a password using bcrypt directly (avoids passlib/bcrypt-4.x incompat)."""
     import bcrypt
+
     # bcrypt has a 72-byte limit; truncate to avoid ValueError.
     pw_bytes = password.encode("utf-8")[:72]
     return bcrypt.hashpw(pw_bytes, bcrypt.gensalt()).decode("ascii")
 
 
-def verify_password(password: str, password_hash: Optional[str]) -> bool:
+def verify_password(password: str, password_hash: str | None) -> bool:
     """Verify a password against a bcrypt hash."""
     if not password_hash:
         return False
     import bcrypt
+
     try:
         pw_bytes = password.encode("utf-8")[:72]
         hash_bytes = password_hash.encode("ascii")

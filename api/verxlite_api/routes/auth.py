@@ -2,24 +2,22 @@
 Auth Routes
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
 from datetime import datetime, timezone
-import jwt
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, EmailStr, Field
 
 from verxlite_api.config import settings
 from verxlite_api.db.session import get_db
-from verxlite_api.models.user import User
-from verxlite_api.models.tenant import Tenant
-from verxlite_api.utils.logger import get_logger
 from verxlite_api.deps import (
     create_access_token,
-    verify_access_token,
     get_current_user,
     hash_password,
     verify_password,
 )
+from verxlite_api.models.tenant import Tenant
+from verxlite_api.models.user import User
+from verxlite_api.utils.logger import get_logger
 
 router = APIRouter(tags=["auth"])
 logger = get_logger("auth")
@@ -35,9 +33,9 @@ class TokenResponse(BaseModel):
 class UserCreateRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    tenant_name: Optional[str] = None
+    first_name: str | None = None
+    last_name: str | None = None
+    tenant_name: str | None = None
 
 
 class UserLoginRequest(BaseModel):
@@ -184,7 +182,9 @@ def _verify_clerk_webhook(request: Request, body: bytes) -> bool:
     Returns True if valid or if CLERK_WEBHOOK_SECRET is unset (dev mode).
     """
     if not settings.CLERK_WEBHOOK_SECRET:
-        logger.warning("CLERK_WEBHOOK_SECRET not set — webhook signature verification skipped (dev only)")
+        logger.warning(
+            "CLERK_WEBHOOK_SECRET not set — webhook signature verification skipped (dev only)"
+        )
         return True
 
     from svix import Webhook, WebhookVerificationError
@@ -196,11 +196,14 @@ def _verify_clerk_webhook(request: Request, body: bytes) -> bool:
     if not (svix_id and svix_timestamp and svix_signature):
         return False
     try:
-        wh.verify(body, {
-            "svix-id": svix_id,
-            "svix-timestamp": svix_timestamp,
-            "svix-signature": svix_signature,
-        })
+        wh.verify(
+            body,
+            {
+                "svix-id": svix_id,
+                "svix-timestamp": svix_timestamp,
+                "svix-signature": svix_signature,
+            },
+        )
         return True
     except WebhookVerificationError:
         return False
@@ -220,6 +223,7 @@ async def clerk_webhook(
         )
 
     import json
+
     payload = json.loads(body)
     event_type = payload.get("type")
     data = payload.get("data", {})

@@ -2,16 +2,16 @@
 User Model
 """
 
-from sqlalchemy import Column, String, Text, Boolean, ForeignKey, DateTime, Index, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import expression
+
 from verxlite_api.db.base import BaseModel
 
 
 class User(BaseModel):
     """
     Represents a user in the system.
-    
+
     Attributes:
         tenant_id: Tenant this user belongs to
         email: User's email address (unique)
@@ -27,15 +27,20 @@ class User(BaseModel):
         timezone: User's timezone
         preferences: JSON field for user preferences
     """
+
     __tablename__ = "users"
     __table_args__ = (
         Index("ix_user_email", "email", unique=True),
         Index("ix_user_tenant", "tenant_id"),
-        Index("ix_user_clerk", "clerk_id", unique=True, postgresql_where=text("clerk_id IS NOT NULL")),
+        Index(
+            "ix_user_clerk", "clerk_id", unique=True, postgresql_where=text("clerk_id IS NOT NULL")
+        ),
         Index("ix_user_active", "is_active"),
     )
 
-    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     email = Column(String(255), nullable=False, unique=True, index=True)
     first_name = Column(String(100), nullable=True)
     last_name = Column(String(100), nullable=True)
@@ -54,7 +59,9 @@ class User(BaseModel):
     tenant = relationship("Tenant", backref="users")
     connections = relationship("Connection", backref="user", cascade="all, delete-orphan")
     workflow_runs = relationship("WorkflowRun", backref="user", cascade="all, delete-orphan")
-    created_workflows = relationship("Workflow", backref="creator", foreign_keys="Workflow.created_by")
+    created_workflows = relationship(
+        "Workflow", backref="creator", foreign_keys="Workflow.created_by"
+    )
 
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email}, role={self.role}, tenant_id={self.tenant_id})>"

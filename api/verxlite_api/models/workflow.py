@@ -2,14 +2,17 @@
 Workflow Model
 """
 
-from sqlalchemy import Column, String, Text, Boolean, ForeignKey, JSON, DateTime, Index, Enum, Integer
-from sqlalchemy.orm import relationship
 from enum import Enum as PyEnum
+
+from sqlalchemy import JSON, Boolean, Column, Enum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.orm import relationship
+
 from verxlite_api.db.base import BaseModel
 
 
 class WorkflowStatus(PyEnum):
     """Status of a workflow."""
+
     DRAFT = "draft"
     ACTIVE = "active"
     INACTIVE = "inactive"
@@ -18,6 +21,7 @@ class WorkflowStatus(PyEnum):
 
 class WorkflowType(PyEnum):
     """Type of workflow."""
+
     POST_MEETING_FOLLOWUP = "post_meeting_followup"
     LEAD_ASSIGNMENT = "lead_assignment"
     SUPPORT_TRIAGE = "support_triage"
@@ -29,7 +33,7 @@ class WorkflowType(PyEnum):
 class Workflow(BaseModel):
     """
     Represents a workflow definition.
-    
+
     Attributes:
         tenant_id: Tenant this workflow belongs to
         created_by: User who created this workflow
@@ -44,6 +48,7 @@ class Workflow(BaseModel):
         version: Version of the workflow
         priority: Priority of the workflow (1-10, higher is more important)
     """
+
     __tablename__ = "workflows"
     __table_args__ = (
         Index("ix_workflow_tenant", "tenant_id"),
@@ -53,21 +58,33 @@ class Workflow(BaseModel):
         Index("ix_workflow_priority", "priority"),
     )
 
-    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(
+        String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     created_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     workflow_type = Column(
-        Enum(WorkflowType, name="workflow_type_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
+        Enum(
+            WorkflowType,
+            name="workflow_type_enum",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         default=WorkflowType.POST_MEETING_FOLLOWUP,
-        nullable=False
+        nullable=False,
     )
     config = Column(JSON, nullable=True, default=dict)  # Workflow-specific configuration
     is_active = Column(Boolean, default=True, nullable=False)
     status = Column(
-        Enum(WorkflowStatus, name="workflow_status_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
+        Enum(
+            WorkflowStatus,
+            name="workflow_status_enum",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         default=WorkflowStatus.ACTIVE,
-        nullable=False
+        nullable=False,
     )
     trigger_config = Column(JSON, nullable=True, default=dict)  # Trigger configuration
     template_id = Column(String(36), nullable=True)  # ID of the template

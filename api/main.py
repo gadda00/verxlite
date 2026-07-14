@@ -2,30 +2,29 @@
 Verxlite API - FastAPI Application
 """
 
-from fastapi import FastAPI, Request, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, PlainTextResponse
-from sqlalchemy import text
-import logging
 import time
 import uuid
-import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse, PlainTextResponse
+from sqlalchemy import text
 
 from verxlite_api.config import settings
 from verxlite_api.db.session import session
-from verxlite_api.routes import auth, connections, workflows, artifacts
+from verxlite_api.routes import artifacts, auth, connections, workflows
 from verxlite_api.schemas.error import (
-    ValidationErrorResponse,
     AuthenticationErrorResponse,
     AuthorizationErrorResponse,
+    InternalErrorResponse,
     NotFoundErrorResponse,
     RateLimitErrorResponse,
-    InternalErrorResponse,
+    ValidationErrorResponse,
 )
 from verxlite_api.utils.logger import get_logger
 
@@ -99,6 +98,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 _static_dir = Path(__file__).parent.parent / "static"
 if _static_dir.exists() and _static_dir.is_dir():
     from fastapi.staticfiles import StaticFiles
+
     app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 else:
     logger.info(f"Static directory '{_static_dir}' not found; skipping StaticFiles mount")
@@ -234,6 +234,7 @@ async def health_check():
     # Redis (with bounded client lifetime)
     try:
         import redis
+
         r = redis.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
         r.ping()
         r.close()
@@ -246,7 +247,9 @@ async def health_check():
         health_status["status"] = "healthy"
     elif any(c["status"] == "unhealthy" for c in health_status["checks"].values()):
         # If both are unhealthy, mark unhealthy; if only one, degraded.
-        unhealthy_count = sum(1 for c in health_status["checks"].values() if c["status"] == "unhealthy")
+        unhealthy_count = sum(
+            1 for c in health_status["checks"].values() if c["status"] == "unhealthy"
+        )
         if unhealthy_count == len(health_status["checks"]):
             health_status["status"] = "unhealthy"
 
@@ -256,8 +259,7 @@ async def health_check():
 @app.get("/metrics", tags=["metrics"], response_class=PlainTextResponse)
 async def metrics():
     """Prometheus-format metrics endpoint."""
-    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-    from verxlite_api.observability.metrics import MetricsCollector
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
     # Also dump in-memory metrics into the registry is non-trivial; we serve
     # the standard process/HTTP metrics here, plus a JSON view from the
@@ -269,6 +271,7 @@ async def metrics():
 async def metrics_json():
     """In-memory workflow metrics (JSON, useful for debugging)."""
     from verxlite_api.observability.metrics import MetricsCollector
+
     return {"metrics": MetricsCollector().get_metrics()}
 
 

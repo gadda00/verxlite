@@ -2,19 +2,22 @@
 Base Model for SQLAlchemy
 """
 
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, DateTime, func
-from sqlalchemy.types import String
 import uuid
+
+from sqlalchemy import Column, DateTime, func
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.types import String
 
 
 class Base(DeclarativeBase):
     """Base class for all SQLAlchemy models."""
+
     pass
 
 
 class BaseModel(Base):
     """Base model with common fields."""
+
     __abstract__ = True
 
     id = Column(

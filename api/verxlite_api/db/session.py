@@ -3,7 +3,8 @@ Database Session Management
 """
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.orm import scoped_session, sessionmaker
+
 from verxlite_api.config import settings
 
 # Create SQLAlchemy engine

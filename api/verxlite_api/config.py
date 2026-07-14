@@ -2,10 +2,10 @@
 Configuration Settings for Verxlite API
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
-from typing import Optional
 import os
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -26,9 +26,11 @@ class Settings(BaseSettings):
     )
 
     # Auth (Clerk) — optional in dev
-    CLERK_SECRET_KEY: Optional[str] = Field(default=None, validation_alias="CLERK_SECRET_KEY")
-    CLERK_PUBLISHABLE_KEY: Optional[str] = Field(default=None, validation_alias="CLERK_PUBLISHABLE_KEY")
-    CLERK_WEBHOOK_SECRET: Optional[str] = Field(default=None, validation_alias="CLERK_WEBHOOK_SECRET")
+    CLERK_SECRET_KEY: str | None = Field(default=None, validation_alias="CLERK_SECRET_KEY")
+    CLERK_PUBLISHABLE_KEY: str | None = Field(
+        default=None, validation_alias="CLERK_PUBLISHABLE_KEY"
+    )
+    CLERK_WEBHOOK_SECRET: str | None = Field(default=None, validation_alias="CLERK_WEBHOOK_SECRET")
 
     # JWT (used when CLERK_SECRET_KEY is not configured)
     JWT_SECRET: str = Field(
@@ -39,35 +41,37 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = Field(default=60 * 24, validation_alias="JWT_EXPIRE_MINUTES")
 
     # OAuth - Google
-    GOOGLE_CLIENT_ID: Optional[str] = Field(default=None, validation_alias="GOOGLE_CLIENT_ID")
-    GOOGLE_CLIENT_SECRET: Optional[str] = Field(default=None, validation_alias="GOOGLE_CLIENT_SECRET")
+    GOOGLE_CLIENT_ID: str | None = Field(default=None, validation_alias="GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET: str | None = Field(default=None, validation_alias="GOOGLE_CLIENT_SECRET")
     GOOGLE_REDIRECT_URI: str = Field(
         default="http://localhost:8000/connections/google/callback",
         validation_alias="GOOGLE_REDIRECT_URI",
     )
 
     # OAuth - HubSpot
-    HUBSPOT_CLIENT_ID: Optional[str] = Field(default=None, validation_alias="HUBSPOT_CLIENT_ID")
-    HUBSPOT_CLIENT_SECRET: Optional[str] = Field(default=None, validation_alias="HUBSPOT_CLIENT_SECRET")
+    HUBSPOT_CLIENT_ID: str | None = Field(default=None, validation_alias="HUBSPOT_CLIENT_ID")
+    HUBSPOT_CLIENT_SECRET: str | None = Field(
+        default=None, validation_alias="HUBSPOT_CLIENT_SECRET"
+    )
     HUBSPOT_REDIRECT_URI: str = Field(
         default="http://localhost:8000/connections/hubspot/callback",
         validation_alias="HUBSPOT_REDIRECT_URI",
     )
 
     # LLM Providers
-    ANTHROPIC_API_KEY: Optional[str] = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
-    OPENAI_API_KEY: Optional[str] = Field(default=None, validation_alias="OPENAI_API_KEY")
+    ANTHROPIC_API_KEY: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
+    OPENAI_API_KEY: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
 
     # Observability (Langfuse)
-    LANGFUSE_SECRET_KEY: Optional[str] = Field(default=None, validation_alias="LANGFUSE_SECRET_KEY")
-    LANGFUSE_PUBLIC_KEY: Optional[str] = Field(default=None, validation_alias="LANGFUSE_PUBLIC_KEY")
+    LANGFUSE_SECRET_KEY: str | None = Field(default=None, validation_alias="LANGFUSE_SECRET_KEY")
+    LANGFUSE_PUBLIC_KEY: str | None = Field(default=None, validation_alias="LANGFUSE_PUBLIC_KEY")
     LANGFUSE_HOST: str = Field(
         default="https://cloud.langfuse.com",
         validation_alias="LANGFUSE_HOST",
     )
 
     # Encryption — REQUIRED in production; in dev we auto-generate a stable key.
-    ENCRYPTION_KEY: Optional[str] = Field(default=None, validation_alias="ENCRYPTION_KEY")
+    ENCRYPTION_KEY: str | None = Field(default=None, validation_alias="ENCRYPTION_KEY")
 
     # Rate limiting
     RATE_LIMIT_ENABLED: bool = Field(default=True, validation_alias="RATE_LIMIT_ENABLED")
@@ -88,8 +92,9 @@ class Settings(BaseSettings):
           (deterministic across restarts, fine for dev).
         - If unset in production, raise.
         """
-        from cryptography.fernet import Fernet, InvalidToken
         import base64
+
+        from cryptography.fernet import Fernet, InvalidToken
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 

@@ -2,17 +2,16 @@
 Artifacts Routes
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from typing import Optional, List
-from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from verxlite_api.db.session import get_db
-from verxlite_api.models.user import User
-from verxlite_api.models.artifact import Artifact
-from verxlite_api.models.workflow_run import WorkflowRun
-from verxlite_api.schemas.artifact import ArtifactResponse, ArtifactListResponse
-from verxlite_api.utils.logger import get_logger
 from verxlite_api.deps import get_current_user
+from verxlite_api.models.artifact import Artifact
+from verxlite_api.models.user import User
+from verxlite_api.models.workflow_run import WorkflowRun
+from verxlite_api.schemas.artifact import ArtifactListResponse, ArtifactResponse
+from verxlite_api.utils.logger import get_logger
 
 router = APIRouter(tags=["artifacts"])
 logger = get_logger("artifacts")
@@ -21,8 +20,8 @@ logger = get_logger("artifacts")
 @router.get("/", response_model=ArtifactListResponse)
 async def list_artifacts(
     request: Request,
-    run_id: Optional[str] = None,
-    artifact_type: Optional[str] = None,
+    run_id: str | None = None,
+    artifact_type: str | None = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db=Depends(get_db),
@@ -30,9 +29,7 @@ async def list_artifacts(
 ):
     """List artifacts with optional filters (scoped to current tenant)."""
     query = (
-        db.query(Artifact)
-        .join(WorkflowRun)
-        .filter(WorkflowRun.tenant_id == current_user.tenant_id)
+        db.query(Artifact).join(WorkflowRun).filter(WorkflowRun.tenant_id == current_user.tenant_id)
     )
 
     if run_id:
@@ -41,12 +38,7 @@ async def list_artifacts(
         query = query.filter(Artifact.artifact_type == artifact_type)
 
     total = query.count()
-    artifacts = (
-        query.order_by(Artifact.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
+    artifacts = query.order_by(Artifact.created_at.desc()).offset(offset).limit(limit).all()
 
     return ArtifactListResponse(
         artifacts=[ArtifactResponse.model_validate(a) for a in artifacts],

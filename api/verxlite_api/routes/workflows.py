@@ -2,36 +2,34 @@
 Workflows Routes
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime, timezone
 import uuid
-import time
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from verxlite_api.db.session import get_db
+from verxlite_api.deps import get_current_user
+from verxlite_api.models.artifact import Artifact
 from verxlite_api.models.user import User
-from verxlite_api.models.workflow import Workflow, WorkflowType, WorkflowStatus
+from verxlite_api.models.workflow import Workflow, WorkflowStatus, WorkflowType
 from verxlite_api.models.workflow_run import WorkflowRun, WorkflowRunStatus, WorkflowRunTriggerType
 from verxlite_api.models.workflow_step import WorkflowStep, WorkflowStepStatus, WorkflowStepType
-from verxlite_api.models.artifact import Artifact
 from verxlite_api.schemas.workflow import (
     WorkflowCreate,
-    WorkflowUpdate,
-    WorkflowResponse,
     WorkflowListResponse,
-    WorkflowTemplateResponse,
+    WorkflowResponse,
     WorkflowTemplateListResponse,
+    WorkflowTemplateResponse,
+    WorkflowUpdate,
 )
 from verxlite_api.schemas.workflow_run import (
     WorkflowRunCreate,
-    WorkflowRunResponse,
-    WorkflowRunListResponse,
     WorkflowRunDetailResponse,
+    WorkflowRunListResponse,
+    WorkflowRunResponse,
     WorkflowRunStatsResponse,
 )
 from verxlite_api.utils.logger import get_logger
-from verxlite_api.deps import get_current_user
 
 router = APIRouter(tags=["workflows"])
 logger = get_logger("workflows")
@@ -111,9 +109,9 @@ async def list_workflow_templates(
 @router.get("/stats", response_model=WorkflowRunStatsResponse)
 async def get_workflow_stats(
     request: Request,
-    workflow_id: Optional[str] = Query(None, description="Filter by workflow ID"),
-    start_date: Optional[datetime] = Query(None, description="Filter by start date"),
-    end_date: Optional[datetime] = Query(None, description="Filter by end date"),
+    workflow_id: str | None = Query(None, description="Filter by workflow ID"),
+    start_date: datetime | None = Query(None, description="Filter by start date"),
+    end_date: datetime | None = Query(None, description="Filter by end date"),
     db=Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -176,12 +174,12 @@ async def get_workflow_stats(
 async def list_workflow_runs(
     request: Request,
     pagination: PaginationParams = Depends(),
-    workflow_id: Optional[str] = Query(None),
-    status: Optional[WorkflowRunStatus] = Query(None),
-    trigger_type: Optional[WorkflowRunTriggerType] = Query(None),
-    search: Optional[str] = Query(None),
-    start_date: Optional[datetime] = Query(None),
-    end_date: Optional[datetime] = Query(None),
+    workflow_id: str | None = Query(None),
+    status: WorkflowRunStatus | None = Query(None),
+    trigger_type: WorkflowRunTriggerType | None = Query(None),
+    search: str | None = Query(None),
+    start_date: datetime | None = Query(None),
+    end_date: datetime | None = Query(None),
     db=Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -223,10 +221,14 @@ async def get_workflow_run(
     current_user: User = Depends(get_current_user),
 ):
     """Get details of a workflow run including steps and artifacts."""
-    workflow_run = db.query(WorkflowRun).filter(
-        WorkflowRun.id == run_id,
-        WorkflowRun.tenant_id == current_user.tenant_id,
-    ).first()
+    workflow_run = (
+        db.query(WorkflowRun)
+        .filter(
+            WorkflowRun.id == run_id,
+            WorkflowRun.tenant_id == current_user.tenant_id,
+        )
+        .first()
+    )
     if not workflow_run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -257,10 +259,10 @@ async def get_workflow_run(
 async def list_workflows(
     request: Request,
     pagination: PaginationParams = Depends(),
-    workflow_type: Optional[WorkflowType] = Query(None),
-    status: Optional[WorkflowStatus] = Query(None),
-    is_active: Optional[bool] = Query(None),
-    search: Optional[str] = Query(None),
+    workflow_type: WorkflowType | None = Query(None),
+    status: WorkflowStatus | None = Query(None),
+    is_active: bool | None = Query(None),
+    search: str | None = Query(None),
     db=Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -275,9 +277,7 @@ async def list_workflows(
         query = query.filter(Workflow.is_active == is_active)
     if search:
         pattern = f"%{search}%"
-        query = query.filter(
-            (Workflow.name.ilike(pattern)) | (Workflow.description.ilike(pattern))
-        )
+        query = query.filter((Workflow.name.ilike(pattern)) | (Workflow.description.ilike(pattern)))
 
     total = query.count()
     workflows = (
@@ -302,10 +302,14 @@ async def create_workflow(
     current_user: User = Depends(get_current_user),
 ):
     """Create a new workflow."""
-    existing = db.query(Workflow).filter(
-        Workflow.tenant_id == current_user.tenant_id,
-        Workflow.name == workflow_data.name,
-    ).first()
+    existing = (
+        db.query(Workflow)
+        .filter(
+            Workflow.tenant_id == current_user.tenant_id,
+            Workflow.name == workflow_data.name,
+        )
+        .first()
+    )
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -336,10 +340,14 @@ async def get_workflow(
     current_user: User = Depends(get_current_user),
 ):
     """Get a specific workflow by ID."""
-    workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.tenant_id == current_user.tenant_id,
-    ).first()
+    workflow = (
+        db.query(Workflow)
+        .filter(
+            Workflow.id == workflow_id,
+            Workflow.tenant_id == current_user.tenant_id,
+        )
+        .first()
+    )
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -356,10 +364,14 @@ async def update_workflow(
     current_user: User = Depends(get_current_user),
 ):
     """Update a workflow."""
-    workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.tenant_id == current_user.tenant_id,
-    ).first()
+    workflow = (
+        db.query(Workflow)
+        .filter(
+            Workflow.id == workflow_id,
+            Workflow.tenant_id == current_user.tenant_id,
+        )
+        .first()
+    )
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -393,10 +405,14 @@ async def delete_workflow(
     current_user: User = Depends(get_current_user),
 ):
     """Soft-delete a workflow (archive)."""
-    workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.tenant_id == current_user.tenant_id,
-    ).first()
+    workflow = (
+        db.query(Workflow)
+        .filter(
+            Workflow.id == workflow_id,
+            Workflow.tenant_id == current_user.tenant_id,
+        )
+        .first()
+    )
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -409,7 +425,9 @@ async def delete_workflow(
     return None
 
 
-@router.post("/{workflow_id}/runs", response_model=WorkflowRunResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{workflow_id}/runs", response_model=WorkflowRunResponse, status_code=status.HTTP_201_CREATED
+)
 async def trigger_workflow_run(
     workflow_id: str,
     run_data: WorkflowRunCreate,
@@ -421,10 +439,14 @@ async def trigger_workflow_run(
     In production, this creates a PENDING run and enqueues a Celery task.
     In dev/test (when Celery isn't reachable), the task is run synchronously.
     """
-    workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.tenant_id == current_user.tenant_id,
-    ).first()
+    workflow = (
+        db.query(Workflow)
+        .filter(
+            Workflow.id == workflow_id,
+            Workflow.tenant_id == current_user.tenant_id,
+        )
+        .first()
+    )
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -437,11 +459,17 @@ async def trigger_workflow_run(
         )
 
     # Idempotency check
-    idempotency_key = run_data.idempotency_key or f"{workflow_id}:{run_data.trigger_type.value}:{uuid.uuid4()}"
-    existing_run = db.query(WorkflowRun).filter(
-        WorkflowRun.idempotency_key == idempotency_key,
-        WorkflowRun.tenant_id == current_user.tenant_id,
-    ).first()
+    idempotency_key = (
+        run_data.idempotency_key or f"{workflow_id}:{run_data.trigger_type.value}:{uuid.uuid4()}"
+    )
+    existing_run = (
+        db.query(WorkflowRun)
+        .filter(
+            WorkflowRun.idempotency_key == idempotency_key,
+            WorkflowRun.tenant_id == current_user.tenant_id,
+        )
+        .first()
+    )
     if existing_run:
         logger.info(f"Duplicate run detected for idempotency key: {idempotency_key}")
         return WorkflowRunResponse.model_validate(existing_run)
@@ -479,6 +507,7 @@ async def trigger_workflow_run(
     # Try to enqueue the Celery task; fall back to synchronous execution in dev.
     try:
         from worker.tasks import execute_workflow_run  # type: ignore[import]
+
         execute_workflow_run.delay(
             run_id=run_id,
             workflow_id=workflow_id,
@@ -495,6 +524,7 @@ async def trigger_workflow_run(
         logger.warning(f"Celery unavailable ({e}); running workflow synchronously")
         try:
             from verxlite_api.services.workflow_engine import WorkflowEngine
+
             engine = WorkflowEngine(db)
             engine.execute_workflow(
                 workflow_id=workflow_id,
@@ -522,12 +552,18 @@ async def enable_workflow(
     current_user: User = Depends(get_current_user),
 ):
     """Enable a workflow."""
-    workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.tenant_id == current_user.tenant_id,
-    ).first()
+    workflow = (
+        db.query(Workflow)
+        .filter(
+            Workflow.id == workflow_id,
+            Workflow.tenant_id == current_user.tenant_id,
+        )
+        .first()
+    )
     if not workflow:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workflow not found: {workflow_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Workflow not found: {workflow_id}"
+        )
     workflow.is_active = True
     workflow.status = WorkflowStatus.ACTIVE
     db.commit()
@@ -542,12 +578,18 @@ async def disable_workflow(
     current_user: User = Depends(get_current_user),
 ):
     """Disable a workflow."""
-    workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.tenant_id == current_user.tenant_id,
-    ).first()
+    workflow = (
+        db.query(Workflow)
+        .filter(
+            Workflow.id == workflow_id,
+            Workflow.tenant_id == current_user.tenant_id,
+        )
+        .first()
+    )
     if not workflow:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workflow not found: {workflow_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Workflow not found: {workflow_id}"
+        )
     workflow.is_active = False
     workflow.status = WorkflowStatus.INACTIVE
     db.commit()

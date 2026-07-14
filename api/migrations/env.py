@@ -14,18 +14,19 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 from verxlite_api.db.base import Base  # noqa: E402
+from verxlite_api.models.artifact import Artifact  # noqa: E402,F401
+from verxlite_api.models.connection import Connection  # noqa: E402,F401
 from verxlite_api.models.tenant import Tenant  # noqa: E402,F401
 from verxlite_api.models.user import User  # noqa: E402,F401
-from verxlite_api.models.connection import Connection  # noqa: E402,F401
 from verxlite_api.models.workflow import Workflow  # noqa: E402,F401
 from verxlite_api.models.workflow_run import WorkflowRun  # noqa: E402,F401
 from verxlite_api.models.workflow_step import WorkflowStep  # noqa: E402,F401
-from verxlite_api.models.artifact import Artifact  # noqa: E402,F401
 
 target_metadata = Base.metadata
 
 # Override the URL from alembic.ini with the runtime settings value.
 from verxlite_api.config import settings  # noqa: E402
+
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 

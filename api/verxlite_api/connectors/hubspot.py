@@ -2,15 +2,16 @@
 HubSpot Connector
 """
 
-from typing import Dict, Any, Optional, List
-import httpx
 from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import httpx
 
 from verxlite_api.config import settings
 from verxlite_api.db.session import session
 from verxlite_api.models.connection import Connection
+from verxlite_api.utils.encryption import decrypt_data, encrypt_data
 from verxlite_api.utils.logger import get_logger
-from verxlite_api.utils.encryption import encrypt_data, decrypt_data
 
 logger = get_logger("hubspot_connector")
 
@@ -22,12 +23,12 @@ class HubSpotConnector:
 
     BASE_URL = "https://api.hubapi.com"
 
-    def __init__(self, connection_id: str, tenant_id: Optional[str] = None):
+    def __init__(self, connection_id: str, tenant_id: str | None = None):
         self.db = session()
         self.connection = self._get_connection(connection_id, tenant_id)
         self.access_token = self._get_access_token()
 
-    def _get_connection(self, connection_id: str, tenant_id: Optional[str] = None) -> Connection:
+    def _get_connection(self, connection_id: str, tenant_id: str | None = None) -> Connection:
         query = self.db.query(Connection).filter(
             Connection.id == connection_id,
             Connection.provider == "hubspot",
@@ -75,7 +76,7 @@ class HubSpotConnector:
             self.access_token = new_access_token
             return new_access_token
 
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/json",
@@ -86,12 +87,10 @@ class HubSpotConnector:
             response = await client.request(method, url, headers=self._get_headers(), **kwargs)
             if response.status_code == 401:
                 await self._refresh_access_token()
-                response = await client.request(
-                    method, url, headers=self._get_headers(), **kwargs
-                )
+                response = await client.request(method, url, headers=self._get_headers(), **kwargs)
             return response
 
-    async def get_contact_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+    async def get_contact_by_email(self, email: str) -> dict[str, Any] | None:
         url = f"{self.BASE_URL}/crm/v3/objects/contacts"
         params = {"q": email}
         response = await self._request("GET", url, params=params)
@@ -102,7 +101,7 @@ class HubSpotConnector:
         results = response.json().get("results", [])
         return results[0] if results else None
 
-    async def get_contact(self, contact_id: str) -> Dict[str, Any]:
+    async def get_contact(self, contact_id: str) -> dict[str, Any]:
         url = f"{self.BASE_URL}/crm/v3/objects/contacts/{contact_id}"
         response = await self._request("GET", url)
         if response.status_code != 200:
@@ -112,11 +111,11 @@ class HubSpotConnector:
     async def create_contact(
         self,
         email: str,
-        first_name: Optional[str] = None,
-        last_name: Optional[str] = None,
-        company: Optional[str] = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        company: str | None = None,
         **properties,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         url = f"{self.BASE_URL}/crm/v3/objects/contacts"
         payload = {
             "properties": {
@@ -132,7 +131,7 @@ class HubSpotConnector:
             raise ValueError(f"Failed to create contact: {response.status_code}")
         return response.json()
 
-    async def update_contact(self, contact_id: str, **properties) -> Dict[str, Any]:
+    async def update_contact(self, contact_id: str, **properties) -> dict[str, Any]:
         url = f"{self.BASE_URL}/crm/v3/objects/contacts/{contact_id}"
         payload = {"properties": properties}
         response = await self._request("PATCH", url, json=payload)
@@ -140,7 +139,7 @@ class HubSpotConnector:
             raise ValueError(f"Failed to update contact: {response.status_code}")
         return response.json()
 
-    async def create_note(self, contact_id: str, body: str) -> Dict[str, Any]:
+    async def create_note(self, contact_id: str, body: str) -> dict[str, Any]:
         url = f"{self.BASE_URL}/crm/v3/objects/notes"
         payload = {
             "properties": {
@@ -158,9 +157,9 @@ class HubSpotConnector:
         self,
         contact_id: str,
         title: str,
-        due_date: Optional[str] = None,
-        body: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        due_date: str | None = None,
+        body: str | None = None,
+    ) -> dict[str, Any]:
         url = f"{self.BASE_URL}/crm/v3/objects/tasks"
         payload = {
             "properties": {
@@ -177,7 +176,7 @@ class HubSpotConnector:
             raise ValueError(f"Failed to create task: {response.status_code}")
         return response.json()
 
-    async def update_deal_stage(self, deal_id: str, stage: str) -> Dict[str, Any]:
+    async def update_deal_stage(self, deal_id: str, stage: str) -> dict[str, Any]:
         url = f"{self.BASE_URL}/crm/v3/objects/deals/{deal_id}"
         payload = {"properties": {"dealstage": stage}}
         response = await self._request("PATCH", url, json=payload)

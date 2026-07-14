@@ -2,14 +2,16 @@
 WorkflowStep Model
 """
 
-from sqlalchemy import Column, String, Text, Boolean, ForeignKey, JSON, Integer, DateTime, Index, Enum
-from sqlalchemy.orm import relationship
 from enum import Enum as PyEnum
+
+from sqlalchemy import JSON, Column, DateTime, Enum, ForeignKey, Index, Integer, String, Text
+
 from verxlite_api.db.base import BaseModel
 
 
 class WorkflowStepStatus(PyEnum):
     """Status of a workflow step."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -20,6 +22,7 @@ class WorkflowStepStatus(PyEnum):
 
 class WorkflowStepType(PyEnum):
     """Type of workflow step."""
+
     TRIGGER = "trigger"
     LLM = "llm"
     TOOL = "tool"
@@ -33,7 +36,7 @@ class WorkflowStepType(PyEnum):
 class WorkflowStep(BaseModel):
     """
     Represents a single step in a workflow run.
-    
+
     Attributes:
         run_id: Workflow run this step belongs to
         step_type: Type of step (from WorkflowStepType enum)
@@ -55,6 +58,7 @@ class WorkflowStep(BaseModel):
         completed_at: When the step completed
         metadata: Additional metadata for the step
     """
+
     __tablename__ = "workflow_steps"
     __table_args__ = (
         Index("ix_workflow_step_run", "run_id"),
@@ -65,45 +69,57 @@ class WorkflowStep(BaseModel):
         Index("ix_workflow_step_created", "created_at"),
     )
 
-    run_id = Column(String(36), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True)
-    
+    run_id = Column(
+        String(36), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
     # Step information
     step_type = Column(
-        Enum(WorkflowStepType, name="workflow_step_type_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
-        nullable=False
+        Enum(
+            WorkflowStepType,
+            name="workflow_step_type_enum",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
     )
     step_name = Column(String(255), nullable=True)
     tool_name = Column(String(255), nullable=True)  # e.g., get_calendar_event, create_crm_note
-    
+
     # Execution status
     status = Column(
-        Enum(WorkflowStepStatus, name="workflow_step_status_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
+        Enum(
+            WorkflowStepStatus,
+            name="workflow_step_status_enum",
+            create_type=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         default=WorkflowStepStatus.PENDING,
-        nullable=False
+        nullable=False,
     )
     error_message = Column(Text, nullable=True)
     error_stack_trace = Column(Text, nullable=True)
-    
+
     # Input/Output (sanitized, no PII)
     input_summary = Column(Text, nullable=True)
     output_summary = Column(Text, nullable=True)
     input_data = Column(JSON, nullable=True, default=dict)
     output_data = Column(JSON, nullable=True, default=dict)
-    
+
     # Performance metrics
     latency_ms = Column(Integer, nullable=True)
     tokens_used = Column(Integer, default=0, nullable=False)
-    
+
     # Order and flow control
     order = Column(Integer, default=0, nullable=False)
     retry_count = Column(Integer, default=0, nullable=False)
     max_retries = Column(Integer, default=3, nullable=False)
     timeout_ms = Column(Integer, default=30000, nullable=False)  # 30 seconds default
-    
+
     # Timing
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
-    
+
     # Metadata
     extra_metadata = Column(JSON, nullable=True, default=dict)
 

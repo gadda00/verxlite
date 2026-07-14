@@ -2,32 +2,31 @@
 Authentication Schemas
 """
 
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
 from datetime import datetime
+
+from pydantic import BaseModel, EmailStr, Field
 
 
 class UserLoginRequest(BaseModel):
     """User login request."""
+
     email: EmailStr = Field(..., description="User's email address")
     password: str = Field(..., description="User's password", min_length=8)
 
     class Config:
         json_schema_extra = {
-            "example": {
-                "email": "user@example.com",
-                "password": "securepassword123"
-            }
+            "example": {"email": "user@example.com", "password": "securepassword123"}
         }
 
 
 class UserRegisterRequest(BaseModel):
     """User registration request."""
+
     email: EmailStr = Field(..., description="User's email address")
     password: str = Field(..., description="User's password", min_length=8)
-    first_name: Optional[str] = Field(None, description="User's first name", max_length=100)
-    last_name: Optional[str] = Field(None, description="User's last name", max_length=100)
-    tenant_name: Optional[str] = Field(None, description="Tenant name", max_length=255)
+    first_name: str | None = Field(None, description="User's first name", max_length=100)
+    last_name: str | None = Field(None, description="User's last name", max_length=100)
+    tenant_name: str | None = Field(None, description="Tenant name", max_length=255)
 
     class Config:
         json_schema_extra = {
@@ -36,21 +35,22 @@ class UserRegisterRequest(BaseModel):
                 "password": "securepassword123",
                 "first_name": "John",
                 "last_name": "Doe",
-                "tenant_name": "Acme Corp"
+                "tenant_name": "Acme Corp",
             }
         }
 
 
 class UserResponse(BaseModel):
     """User response model."""
+
     id: str
     email: EmailStr
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    full_name: Optional[str] = None
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
     role: str
     is_active: bool
-    avatar_url: Optional[str] = None
+    avatar_url: str | None = None
     timezone: str
     tenant_id: str
     created_at: datetime
@@ -71,17 +71,18 @@ class UserResponse(BaseModel):
                 "timezone": "UTC",
                 "tenant_id": "tenant_abc123",
                 "created_at": "2024-01-01T12:00:00Z",
-                "updated_at": "2024-01-01T12:00:00Z"
+                "updated_at": "2024-01-01T12:00:00Z",
             }
         }
 
 
 class TokenResponse(BaseModel):
     """Token response model."""
+
     access_token: str
     token_type: str = "bearer"
     expires_in: int
-    refresh_token: Optional[str] = None
+    refresh_token: str | None = None
     user: UserResponse
 
     class Config:
@@ -98,19 +99,16 @@ class TokenResponse(BaseModel):
                     "last_name": "Doe",
                     "role": "admin",
                     "is_active": True,
-                    "tenant_id": "tenant_abc123"
-                }
+                    "tenant_id": "tenant_abc123",
+                },
             }
         }
 
 
 class RefreshTokenRequest(BaseModel):
     """Refresh token request."""
+
     refresh_token: str = Field(..., description="Refresh token")
 
     class Config:
-        json_schema_extra = {
-            "example": {
-                "refresh_token": "refresh_token_value"
-            }
-        }
+        json_schema_extra = {"example": {"refresh_token": "refresh_token_value"}}

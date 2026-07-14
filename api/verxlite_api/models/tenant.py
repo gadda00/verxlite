@@ -2,8 +2,8 @@
 Tenant Model
 """
 
-from sqlalchemy import Column, String, Text, DateTime, Boolean, func, Index, text
-from sqlalchemy.sql import expression
+from sqlalchemy import Boolean, Column, DateTime, Index, String, Text, text
+
 from verxlite_api.db.base import BaseModel
 
 
@@ -22,10 +22,13 @@ class Tenant(BaseModel):
         trial_ends_at: When trial period ends
         settings: JSON field for tenant-specific settings
     """
+
     __tablename__ = "tenants"
     __table_args__ = (
         Index("ix_tenant_name", "name", unique=True, postgresql_where=text("name IS NOT NULL")),
-        Index("ix_tenant_domain", "domain", unique=True, postgresql_where=text("domain IS NOT NULL")),
+        Index(
+            "ix_tenant_domain", "domain", unique=True, postgresql_where=text("domain IS NOT NULL")
+        ),
         Index("ix_tenant_active", "is_active"),
     )
 
