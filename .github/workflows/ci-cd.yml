@@ -184,13 +184,16 @@ jobs:
           npm audit --omit=dev --audit-level=high || true
 
   # ------------------------------------------------------------------
-  # Build Docker images (only on main, only if Docker Hub secrets are set)
+  # Build Docker images (only on main)
+  # NOTE: This job is disabled until DOCKER_HUB_USERNAME / DOCKER_HUB_TOKEN
+  # secrets are configured on the repo. To enable, set the secrets and
+  # uncomment the steps below (or remove the `if: false` line).
   # ------------------------------------------------------------------
   build:
-    name: Build Docker Images
+    name: Build Docker Images (disabled — no Docker Hub secrets)
     needs: [test-backend, test-frontend]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.DOCKER_HUB_USERNAME != ''
+    if: false  # Re-enable when Docker Hub secrets are configured.
 
     steps:
       - name: Checkout code
@@ -243,10 +246,10 @@ jobs:
   # Deploy (only on main, manual approval required via environment)
   # ------------------------------------------------------------------
   deploy:
-    name: Deploy to Production
+    name: Deploy to Production (disabled — no Fly.io secrets)
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: false  # Re-enable when Fly.io secrets + build job are configured.
     environment:
       name: production
       url: https://verxlite.dev
