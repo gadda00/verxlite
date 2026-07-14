@@ -2,7 +2,6 @@
 Artifacts Routes
 """
 
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from verxlite_api.db.session import get_db

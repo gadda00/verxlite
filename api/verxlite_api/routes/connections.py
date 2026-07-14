@@ -344,9 +344,9 @@ async def google_callback(
         provider="google",
         provider_user_id=user_info.get("id"),
         access_token=encrypt_data(token_data["access_token"]),
-        refresh_token=encrypt_data(token_data["refresh_token"])
-        if token_data.get("refresh_token")
-        else None,
+        refresh_token=(
+            encrypt_data(token_data["refresh_token"]) if token_data.get("refresh_token") else None
+        ),
         token_type=token_data.get("token_type", "Bearer"),
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=max(expires_in - 60, 60)),
         scope=",".join(GOOGLE_SCOPES),

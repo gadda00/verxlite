@@ -334,9 +334,11 @@ class WorkflowEngine:
         step = WorkflowStep(
             id=step_id,
             run_id=workflow_run.id,
-            step_type=WorkflowStepType(step_type)
-            if step_type in [t.value for t in WorkflowStepType]
-            else WorkflowStepType.TOOL,
+            step_type=(
+                WorkflowStepType(step_type)
+                if step_type in [t.value for t in WorkflowStepType]
+                else WorkflowStepType.TOOL
+            ),
             step_name=step_name,
             tool_name=step_def.get("tool_name"),
             status=WorkflowStepStatus.RUNNING,

@@ -5,7 +5,6 @@ Uses Fernet symmetric encryption. The key is provided by Settings.ENCRYPTION_KEY
 (or derived deterministically from JWT_SECRET in dev — see config.get_encryption_key).
 """
 
-
 from cryptography.fernet import Fernet
 
 
