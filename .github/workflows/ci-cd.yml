@@ -184,13 +184,13 @@ jobs:
           npm audit --omit=dev --audit-level=high || true
 
   # ------------------------------------------------------------------
-  # Build Docker images (only on main)
+  # Build Docker images (only on main, only if Docker Hub secrets are set)
   # ------------------------------------------------------------------
   build:
     name: Build Docker Images
     needs: [test-backend, test-frontend]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.DOCKER_HUB_USERNAME != ''
 
     steps:
       - name: Checkout code
