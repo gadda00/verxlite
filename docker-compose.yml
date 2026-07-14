@@ -1,4 +1,5 @@
-version: "3.8"
+# docker-compose.yml — local development
+# For production, use docker-compose.prod.yml (TBD) or deploy to Fly.io / Render.
 
 services:
   # PostgreSQL Database
@@ -6,18 +7,19 @@ services:
     image: postgres:15-alpine
     container_name: verxlite_db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: verxlite
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-verxlite}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # Redis Queue
   redis:
@@ -32,6 +34,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # Backend API
   api:
@@ -40,10 +43,14 @@ services:
       dockerfile: Dockerfile
     container_name: verxlite_api
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/verxlite
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-verxlite}
       REDIS_URL: redis://redis:6379/0
+      FRONTEND_URL: http://localhost:3000
       ENVIRONMENT: development
       DEBUG: "true"
+      # In production, set these via Docker secrets or ${VAR} substitution.
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-32-byte-random-string}
     ports:
       - "8000:8000"
     depends_on:
@@ -51,30 +58,27 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./api:/app
-    command: sh -c "poetry install && poetry run uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+    restart: unless-stopped
+    # Image already has deps installed at build time — no runtime install needed.
 
   # Worker (Celery)
   worker:
     build:
-      context: ./worker
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: worker/Dockerfile
     container_name: verxlite_worker
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/verxlite
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-verxlite}
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: development
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-32-byte-random-string}
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-      api:
-        condition: service_started
-    volumes:
-      - ./worker:/app
-    command: sh -c "poetry install && poetry run celery -A tasks worker --loglevel=info"
+    restart: unless-stopped
 
   # Frontend (Next.js)
   web:
@@ -83,17 +87,15 @@ services:
       dockerfile: Dockerfile
     container_name: verxlite_web
     environment:
-      NEXT_PUBLIC_API_URL: http://api:8000
+      # Browser-reachable URL — do NOT use the Docker-internal `http://api:8000`.
+      NEXT_PUBLIC_API_URL: http://localhost:8000
       NEXT_PUBLIC_ENVIRONMENT: development
     ports:
       - "3000:3000"
     depends_on:
       api:
         condition: service_started
-    volumes:
-      - ./web:/app
-      - /app/node_modules
-    command: sh -c "npm install && npm run dev"
+    restart: unless-stopped
 
 volumes:
   postgres_data:

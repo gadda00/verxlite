@@ -1,8 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    serverActions: true,
-  },
+  reactStrictMode: true,
+  // Allow the Docker container to bind to any host.
+  experimental: {},
 };
 
 module.exports = nextConfig;

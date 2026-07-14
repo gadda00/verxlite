@@ -5,11 +5,14 @@ Pytest Configuration and Fixtures
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 import os
 import sys
 
-# Add parent directory to path
+# Add repo root to path so `tests/` can import `verxlite_api` and `main`.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Also add `api/` so `from main import app` works in test_routes.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api"))
 
 from verxlite_api.db.base import Base
 from verxlite_api.models.tenant import Tenant
@@ -20,27 +23,30 @@ from verxlite_api.models.workflow_run import WorkflowRun, WorkflowRunStatus, Wor
 from verxlite_api.models.workflow_step import WorkflowStep, WorkflowStepStatus, WorkflowStepType
 from verxlite_api.models.artifact import Artifact, ArtifactType, ArtifactStatus
 
-# Create test database
+# Create test database (SQLite in-memory).
+# IMPORTANT: use StaticPool so the single in-memory DB is shared across all
+# connections/sessions — otherwise each new connection sees a fresh empty DB.
 TEST_DATABASE_URL = "sqlite:///:memory:"
 
-engine = create_engine(TEST_DATABASE_URL, echo=False)
+engine = create_engine(
+    TEST_DATABASE_URL,
+    echo=False,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 @pytest.fixture(scope="function")
 def db_session():
-    """Create a new database session for each test."""
-    # Create all tables
+    """Create a new database session for each test (function-scoped)."""
     Base.metadata.create_all(bind=engine)
-    
-    # Create session
     session = TestingSessionLocal()
-    
-    yield session
-    
-    # Clean up
-    session.close()
-    Base.metadata.drop_all(bind=engine)
+    try:
+        yield session
+    finally:
+        session.close()
+        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture
@@ -60,7 +66,8 @@ def test_tenant(db_session):
 
 @pytest.fixture
 def test_user(db_session, test_tenant):
-    """Create a test user."""
+    """Create a test user with a known password hash."""
+    from verxlite_api.deps import hash_password
     user = User(
         tenant_id=test_tenant.id,
         email="test@example.com",
@@ -69,6 +76,7 @@ def test_user(db_session, test_tenant):
         role="admin",
         is_active=True,
         clerk_id="clerk_test_123",
+        password_hash=hash_password("testpassword123"),
     )
     db_session.add(user)
     db_session.commit()
@@ -90,7 +98,7 @@ def test_connection_google(db_session, test_tenant, test_user):
         expires_at=None,
         scope="email,profile,calendar.readonly",
         is_active=True,
-        metadata={"user_info": {"email": "test@example.com"}},
+        extra_metadata={"user_info": {"email": "test@example.com"}},
     )
     db_session.add(connection)
     db_session.commit()
@@ -112,7 +120,7 @@ def test_connection_hubspot(db_session, test_tenant, test_user):
         expires_at=None,
         scope="contacts,content,automation",
         is_active=True,
-        metadata={},
+        extra_metadata={},
     )
     db_session.add(connection)
     db_session.commit()
@@ -200,7 +208,7 @@ def test_artifact(db_session, test_workflow_run):
         status=ArtifactStatus.COMPLETED,
         content_summary="Test CRM note",
         content_data={"body": "Test note content"},
-        metadata={"contact_id": "contact_123"},
+        extra_metadata={"contact_id": "contact_123"},
     )
     db_session.add(artifact)
     db_session.commit()
@@ -208,14 +216,51 @@ def test_artifact(db_session, test_workflow_run):
     return artifact
 
 
+# Auth helper fixtures -------------------------------------------------------- #
+@pytest.fixture
+def auth_token(test_user):
+    """Return a JWT for the test user."""
+    from verxlite_api.deps import create_access_token
+    return create_access_token(
+        data={"sub": test_user.id, "email": test_user.email, "tenant_id": test_user.tenant_id, "role": test_user.role}
+    )
+
+
+@pytest.fixture
+def auth_headers(auth_token):
+    """Return Authorization headers for an authenticated request."""
+    return {"Authorization": f"Bearer {auth_token}"}
+
+
+# Override the `get_db` dependency in the FastAPI app so route tests use the
+# function-scoped SQLite session instead of the production engine.
+@pytest.fixture
+def client(db_session, test_user):
+    """Return a TestClient with `get_db` overridden to use the test session."""
+    from fastapi.testclient import TestClient
+    from main import app
+    from verxlite_api.db.session import get_db
+
+    def _override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass  # session is closed by the db_session fixture.
+
+    app.dependency_overrides[get_db] = _override_get_db
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
 # Mock external API responses
 @pytest.fixture
 def mock_google_api():
-    """Mock Google API responses."""
+    """Mock Google API responses (placeholder)."""
     pass
 
 
 @pytest.fixture
 def mock_hubspot_api():
-    """Mock HubSpot API responses."""
+    """Mock HubSpot API responses (placeholder)."""
     pass

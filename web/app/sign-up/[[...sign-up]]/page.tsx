@@ -47,7 +47,7 @@ export default function SignUpPage() {
               path="/sign-up"
               routing="path"
               signInUrl="/login"
-              appearance={
+              appearance={{
                 elements: {
                   rootBox: "w-full",
                   card: "shadow-none border-none",

@@ -52,6 +52,7 @@ class ConnectionResponse(BaseModel):
     scope: Optional[str] = None
     last_sync_at: Optional[datetime] = None
     sync_status: Optional[str] = None
+    extra_metadata: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
 

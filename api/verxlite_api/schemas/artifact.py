@@ -44,7 +44,7 @@ class ArtifactResponse(BaseModel):
     status: ArtifactStatus
     content_summary: Optional[str] = None
     content_data: Dict[str, Any]
-    metadata: Dict[str, Any]
+    extra_metadata: Dict[str, Any]
     parent_artifact_id: Optional[str] = None
     size_bytes: Optional[int] = None
     mime_type: Optional[str] = None

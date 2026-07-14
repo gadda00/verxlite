@@ -33,8 +33,7 @@ class WorkflowRunStatus(str, Enum):
 
 
 class WorkflowRunCreate(BaseModel):
-    """Workflow run creation request."""
-    workflow_id: str = Field(..., description="ID of workflow to run")
+    """Workflow run creation request. `workflow_id` is taken from the URL path."""
     trigger_type: WorkflowRunTriggerType = Field(
         WorkflowRunTriggerType.MANUAL,
         description="Type of trigger"

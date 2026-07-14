@@ -69,7 +69,7 @@ class WorkflowStep(BaseModel):
     
     # Step information
     step_type = Column(
-        Enum(WorkflowStepType, name="workflow_step_type_enum", create_type=True),
+        Enum(WorkflowStepType, name="workflow_step_type_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
         nullable=False
     )
     step_name = Column(String(255), nullable=True)
@@ -77,7 +77,7 @@ class WorkflowStep(BaseModel):
     
     # Execution status
     status = Column(
-        Enum(WorkflowStepStatus, name="workflow_step_status_enum", create_type=True),
+        Enum(WorkflowStepStatus, name="workflow_step_status_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
         default=WorkflowStepStatus.PENDING,
         nullable=False
     )
@@ -87,8 +87,8 @@ class WorkflowStep(BaseModel):
     # Input/Output (sanitized, no PII)
     input_summary = Column(Text, nullable=True)
     output_summary = Column(Text, nullable=True)
-    input_data = Column(JSON, nullable=True, default={})
-    output_data = Column(JSON, nullable=True, default={})
+    input_data = Column(JSON, nullable=True, default=dict)
+    output_data = Column(JSON, nullable=True, default=dict)
     
     # Performance metrics
     latency_ms = Column(Integer, nullable=True)
@@ -105,7 +105,7 @@ class WorkflowStep(BaseModel):
     completed_at = Column(DateTime, nullable=True)
     
     # Metadata
-    metadata = Column(JSON, nullable=True, default={})
+    extra_metadata = Column(JSON, nullable=True, default=dict)
 
     @property
     def is_completed(self) -> bool:
@@ -154,7 +154,7 @@ class WorkflowStep(BaseModel):
             "timeout_ms": self.timeout_ms,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
-            "metadata": self.metadata,
+            "metadata": self.extra_metadata,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }

@@ -2,27 +2,27 @@
 Auth Routes
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 import jwt
-import os
 
 from verxlite_api.config import settings
 from verxlite_api.db.session import get_db
 from verxlite_api.models.user import User
 from verxlite_api.models.tenant import Tenant
 from verxlite_api.utils.logger import get_logger
+from verxlite_api.deps import (
+    create_access_token,
+    verify_access_token,
+    get_current_user,
+    hash_password,
+    verify_password,
+)
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(tags=["auth"])
 logger = get_logger("auth")
-
-# JWT Configuration
-JWT_SECRET = settings.CLERK_SECRET_KEY or "verxlite-secret-key"
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRE_MINUTES = 30
 
 
 class TokenResponse(BaseModel):
@@ -33,75 +33,34 @@ class TokenResponse(BaseModel):
 
 
 class UserCreateRequest(BaseModel):
-    email: str
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     tenant_name: Optional[str] = None
 
 
 class UserLoginRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    """
-    Create a JWT access token.
-    """
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=JWT_EXPIRE_MINUTES)
-    
-    to_encode.update({
-        "exp": expire,
-        "iat": datetime.utcnow(),
-    })
-    
-    encoded_jwt = jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    return encoded_jwt
-
-
-def verify_access_token(token: str):
-    """
-    Verify a JWT access token.
-    """
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token expired",
-        )
-    except jwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-        )
-
-
-@router.post("/register", response_model=TokenResponse)
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register_user(
     request: UserCreateRequest,
     db=Depends(get_db),
 ):
-    """
-    Register a new user.
-    """
+    """Register a new user with email + password."""
     logger.info(f"Registering new user: {request.email}")
-    
-    # Check if user already exists
-    existing_user = db.query(User).filter(User.email == request.email).first()
-    if existing_user:
+
+    existing = db.query(User).filter(User.email == request.email).first()
+    if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User already exists",
         )
-    
+
     # Create or get tenant
-    tenant = None
     if request.tenant_name:
         tenant = Tenant(
             name=request.tenant_name,
@@ -122,32 +81,33 @@ async def register_user(
             db.add(tenant)
             db.commit()
             db.refresh(tenant)
-    
-    # Create user
+
+    # First user in this tenant becomes admin
+    users_in_tenant = db.query(User).filter(User.tenant_id == tenant.id).count()
+    role = "admin" if users_in_tenant == 0 else "member"
+
     user = User(
         tenant_id=tenant.id,
         email=request.email,
         first_name=request.first_name,
         last_name=request.last_name,
-        role="admin" if not db.query(User).count() else "member",
+        role=role,
         is_active=True,
+        password_hash=hash_password(request.password),
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    
-    # Create access token
-    access_token_expires = timedelta(minutes=JWT_EXPIRE_MINUTES)
+
     access_token = create_access_token(
-        data={"sub": user.id, "email": user.email, "tenant_id": tenant.id},
-        expires_delta=access_token_expires,
+        data={"sub": user.id, "email": user.email, "tenant_id": tenant.id, "role": user.role}
     )
-    
+
     logger.info(f"User registered: {user.id}")
-    
+
     return TokenResponse(
         access_token=access_token,
-        expires_in=int(access_token_expires.total_seconds()),
+        expires_in=settings.JWT_EXPIRE_MINUTES * 60,
         user={
             "id": user.id,
             "email": user.email,
@@ -164,32 +124,34 @@ async def login_user(
     request: UserLoginRequest,
     db=Depends(get_db),
 ):
-    """
-    Login a user.
-    """
+    """Login a user with email + password (verifies password hash)."""
     logger.info(f"Login attempt for: {request.email}")
-    
-    # In a real implementation, verify password against hashed password
-    # For now, we'll just check if the user exists
+
     user = db.query(User).filter(User.email == request.email).first()
-    if not user:
+    if not user or not verify_password(request.password, user.password_hash):
+        # Constant-time-ish response: don't leak whether the email exists.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
         )
-    
-    # Create access token
-    access_token_expires = timedelta(minutes=JWT_EXPIRE_MINUTES)
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is inactive",
+        )
+
+    user.last_login_at = datetime.now(timezone.utc)
+    db.commit()
+
     access_token = create_access_token(
-        data={"sub": user.id, "email": user.email, "tenant_id": user.tenant_id},
-        expires_delta=access_token_expires,
+        data={"sub": user.id, "email": user.email, "tenant_id": user.tenant_id, "role": user.role}
     )
-    
+
     logger.info(f"User logged in: {user.id}")
-    
+
     return TokenResponse(
         access_token=access_token,
-        expires_in=int(access_token_expires.total_seconds()),
+        expires_in=settings.JWT_EXPIRE_MINUTES * 60,
         user={
             "id": user.id,
             "email": user.email,
@@ -202,85 +164,85 @@ async def login_user(
 
 
 @router.get("/me")
-async def get_current_user(
-    request: Request,
-    db=Depends(get_db),
-):
-    """
-    Get the current user from the JWT token.
-    """
-    token = request.headers.get("Authorization")
-    if not token or not token.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
-    
-    token = token.split(" ")[1]
-    payload = verify_access_token(token)
-    
-    user_id = payload.get("sub")
-    user = db.query(User).filter(User.id == user_id).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
-    
+async def get_me(current_user: User = Depends(get_current_user)):
+    """Get the current authenticated user."""
     return {
-        "id": user.id,
-        "email": user.email,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "role": user.role,
-        "tenant_id": user.tenant_id,
+        "id": current_user.id,
+        "email": current_user.email,
+        "first_name": current_user.first_name,
+        "last_name": current_user.last_name,
+        "full_name": current_user.full_name,
+        "role": current_user.role,
+        "tenant_id": current_user.tenant_id,
     }
 
 
-# Clerk Webhook for production auth
+def _verify_clerk_webhook(request: Request, body: bytes) -> bool:
+    """
+    Verify the Clerk webhook signature using svix.
+
+    Returns True if valid or if CLERK_WEBHOOK_SECRET is unset (dev mode).
+    """
+    if not settings.CLERK_WEBHOOK_SECRET:
+        logger.warning("CLERK_WEBHOOK_SECRET not set — webhook signature verification skipped (dev only)")
+        return True
+
+    from svix import Webhook, WebhookVerificationError
+
+    wh = Webhook(settings.CLERK_WEBHOOK_SECRET)
+    svix_id = request.headers.get("svix-id")
+    svix_timestamp = request.headers.get("svix-timestamp")
+    svix_signature = request.headers.get("svix-signature")
+    if not (svix_id and svix_timestamp and svix_signature):
+        return False
+    try:
+        wh.verify(body, {
+            "svix-id": svix_id,
+            "svix-timestamp": svix_timestamp,
+            "svix-signature": svix_signature,
+        })
+        return True
+    except WebhookVerificationError:
+        return False
+
+
 @router.post("/clerk-webhook")
 async def clerk_webhook(
     request: Request,
     db=Depends(get_db),
 ):
-    """
-    Handle Clerk webhook events for user synchronization.
-    """
-    # Verify webhook signature
-    # In production, verify the signature using CLERK_SECRET_KEY
-    
-    body = await request.json()
-    event_type = body.get("type")
-    data = body.get("data")
-    
+    """Handle Clerk webhook events for user synchronization."""
+    body = await request.body()
+    if not _verify_clerk_webhook(request, body):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid webhook signature",
+        )
+
+    import json
+    payload = json.loads(body)
+    event_type = payload.get("type")
+    data = payload.get("data", {})
+
     logger.info(f"Clerk webhook received: {event_type}")
-    
+
     if event_type == "user.created":
         clerk_id = data.get("id")
-        email = data.get("email_addresses", [{}])[0].get("email_address")
+        email = (data.get("email_addresses") or [{}])[0].get("email_address")
         first_name = data.get("first_name")
         last_name = data.get("last_name")
-        
-        # Check if user exists
-        existing_user = db.query(User).filter(User.clerk_id == clerk_id).first()
-        if existing_user:
-            logger.info(f"User already exists: {clerk_id}")
+
+        existing = db.query(User).filter(User.clerk_id == clerk_id).first()
+        if existing:
             return {"status": "ok"}
-        
-        # Create or get tenant
+
         tenant = db.query(Tenant).first()
         if not tenant:
-            tenant = Tenant(
-                name="Default Tenant",
-                description="Default workspace",
-                is_active=True,
-            )
+            tenant = Tenant(name="Default Tenant", description="Default workspace", is_active=True)
             db.add(tenant)
             db.commit()
             db.refresh(tenant)
-        
-        # Create user
+
         user = User(
             tenant_id=tenant.id,
             email=email,
@@ -292,26 +254,24 @@ async def clerk_webhook(
         )
         db.add(user)
         db.commit()
-        db.refresh(user)
-        
         logger.info(f"User created from Clerk: {user.id}")
-    
+
     elif event_type == "user.updated":
         clerk_id = data.get("id")
         user = db.query(User).filter(User.clerk_id == clerk_id).first()
         if user:
-            user.email = data.get("email_addresses", [{}])[0].get("email_address")
-            user.first_name = data.get("first_name")
-            user.last_name = data.get("last_name")
+            user.email = (data.get("email_addresses") or [{}])[0].get("email_address", user.email)
+            user.first_name = data.get("first_name", user.first_name)
+            user.last_name = data.get("last_name", user.last_name)
             db.commit()
-            logger.info(f"User updated from Clerk: {user.id}")
-    
+
     elif event_type == "user.deleted":
         clerk_id = data.get("id")
         user = db.query(User).filter(User.clerk_id == clerk_id).first()
         if user:
-            db.delete(user)
+            # Soft delete: deactivate instead of hard delete.
+            user.is_active = False
             db.commit()
-            logger.info(f"User deleted from Clerk: {user.id}")
-    
+            logger.info(f"User deactivated from Clerk: {user.id}")
+
     return {"status": "ok"}

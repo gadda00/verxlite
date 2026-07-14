@@ -1,16 +1,24 @@
-"""${messages | truncate(46, True)}..."""
-<%- set callable = '  '.join([x[0] for x in context.get_current_parameters()]) %>
-<%- set msg = messages[0] %>
-<%- set (p, filename, line) = msg %>
+"""${message}
 
-# ${p.name}:
-# ${filename}:${line}
+Revision ID: ${up_revision}
+Revises: ${down_revision | comma,n}
+Create Date: ${create_date}
 
+"""
 from alembic import op
 import sqlalchemy as sa
-
 ${imports if imports else ""}
 
-# ${callable}
-def ${p.name}():
-${messages | indent(4, False)}
+# revision identifiers, used by Alembic.
+revision = ${repr(up_revision)}
+down_revision = ${repr(down_revision)}
+branch_labels = ${repr(branch_labels)}
+depends_on = ${repr(depends_on)}
+
+
+def upgrade():
+    ${upgrades if upgrades else "pass"}
+
+
+def downgrade():
+    ${downgrades if downgrades else "pass"}

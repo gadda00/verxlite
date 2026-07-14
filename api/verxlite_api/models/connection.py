@@ -7,7 +7,6 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import expression
 from verxlite_api.db.base import BaseModel
 from verxlite_api.utils.encryption import encrypt_data, decrypt_data
-from verxlite_api.config import settings
 
 
 class Connection(BaseModel):
@@ -49,21 +48,21 @@ class Connection(BaseModel):
     expires_at = Column(DateTime, nullable=True)
     scope = Column(Text, nullable=True)  # Comma-separated scopes
     is_active = Column(Boolean, default=True, nullable=False)
-    metadata = Column(JSON, nullable=True)  # Additional provider-specific data
+    extra_metadata = Column(JSON, nullable=True, default=dict)  # Additional provider-specific data
     last_sync_at = Column(DateTime, nullable=True)
     sync_status = Column(String(20), nullable=True)  # success, failed, pending
     sync_error = Column(Text, nullable=True)
 
     # Relationships
     tenant = relationship("Tenant", backref="connections")
-    user = relationship("User")
+    # `user` is created automatically via the backref on User.connections.
 
     @property
     def decrypted_access_token(self):
         """Decrypt the access token."""
         if self.access_token:
             try:
-                return decrypt_data(self.access_token, settings.ENCRYPTION_KEY)
+                return decrypt_data(self.access_token)
             except Exception:
                 return None
         return None
@@ -72,7 +71,7 @@ class Connection(BaseModel):
     def decrypted_access_token(self, value):
         """Encrypt and set the access token."""
         if value:
-            self.access_token = encrypt_data(value, settings.ENCRYPTION_KEY)
+            self.access_token = encrypt_data(value)
         else:
             self.access_token = None
 
@@ -81,7 +80,7 @@ class Connection(BaseModel):
         """Decrypt the refresh token."""
         if self.refresh_token:
             try:
-                return decrypt_data(self.refresh_token, settings.ENCRYPTION_KEY)
+                return decrypt_data(self.refresh_token)
             except Exception:
                 return None
         return None
@@ -90,7 +89,7 @@ class Connection(BaseModel):
     def decrypted_refresh_token(self, value):
         """Encrypt and set the refresh token."""
         if value:
-            self.refresh_token = encrypt_data(value, settings.ENCRYPTION_KEY)
+            self.refresh_token = encrypt_data(value)
         else:
             self.refresh_token = None
 
@@ -99,7 +98,12 @@ class Connection(BaseModel):
         """Check if the access token is expired."""
         if not self.expires_at:
             return True
-        return self.expires_at < DateTime.utcnow()
+        from datetime import datetime, timezone
+        # Make both sides timezone-aware before comparing.
+        expires = self.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return expires < datetime.now(timezone.utc)
 
     @property
     def scopes_list(self):

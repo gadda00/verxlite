@@ -2,7 +2,7 @@
 Workflow Model
 """
 
-from sqlalchemy import Column, String, Text, Boolean, ForeignKey, JSON, DateTime, Index, Enum
+from sqlalchemy import Column, String, Text, Boolean, ForeignKey, JSON, DateTime, Index, Enum, Integer
 from sqlalchemy.orm import relationship
 from enum import Enum as PyEnum
 from verxlite_api.db.base import BaseModel
@@ -58,25 +58,25 @@ class Workflow(BaseModel):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     workflow_type = Column(
-        Enum(WorkflowType, name="workflow_type_enum", create_type=True),
+        Enum(WorkflowType, name="workflow_type_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
         default=WorkflowType.POST_MEETING_FOLLOWUP,
         nullable=False
     )
-    config = Column(JSON, nullable=True, default={})  # Workflow-specific configuration
+    config = Column(JSON, nullable=True, default=dict)  # Workflow-specific configuration
     is_active = Column(Boolean, default=True, nullable=False)
     status = Column(
-        Enum(WorkflowStatus, name="workflow_status_enum", create_type=True),
+        Enum(WorkflowStatus, name="workflow_status_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
         default=WorkflowStatus.ACTIVE,
         nullable=False
     )
-    trigger_config = Column(JSON, nullable=True, default={})  # Trigger configuration
+    trigger_config = Column(JSON, nullable=True, default=dict)  # Trigger configuration
     template_id = Column(String(36), nullable=True)  # ID of the template
     version = Column(String(50), default="1.0", nullable=False)  # Version of the workflow
     priority = Column(Integer, default=5, nullable=False)  # Priority (1-10)
 
     # Relationships
     tenant = relationship("Tenant", backref="workflows")
-    creator = relationship("User", foreign_keys=[created_by])
+    # `creator` is created via backref on User.created_workflows.
     runs = relationship("WorkflowRun", backref="workflow", cascade="all, delete-orphan")
 
     def __repr__(self):

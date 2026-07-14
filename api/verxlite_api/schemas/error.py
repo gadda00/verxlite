@@ -2,9 +2,9 @@
 Error Response Schemas
 """
 
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
-from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Optional, List
+from datetime import datetime, timezone
 
 
 class ErrorDetail(BaseModel):
@@ -19,12 +19,12 @@ class ErrorResponse(BaseModel):
     error: str
     message: str
     details: Optional[List[ErrorDetail]] = None
-    timestamp: datetime = datetime.utcnow()
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     request_id: Optional[str] = None
     status_code: int
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "error": "ValidationError",
                 "message": "Invalid request data",
@@ -40,6 +40,7 @@ class ErrorResponse(BaseModel):
                 "status_code": 400
             }
         }
+    )
 
 
 class ValidationErrorResponse(ErrorResponse):

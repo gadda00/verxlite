@@ -6,13 +6,15 @@ from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, PlainTextResponse
+from sqlalchemy import text
 import logging
 import time
 import uuid
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+from pathlib import Path
 
 from verxlite_api.config import settings
 from verxlite_api.db.session import session
@@ -27,112 +29,94 @@ from verxlite_api.schemas.error import (
 )
 from verxlite_api.utils.logger import get_logger
 
-# Configure logging
 logger = get_logger("verxlite_api")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """
-    Application lifespan manager.
-    """
-    # Startup
+    """Application lifespan manager."""
     logger.info("Starting Verxlite API...")
-    
-    # Initialize database connection pool
-    # In production, you might want to test the database connection here
-    
     yield
-    
-    # Shutdown
     logger.info("Shutting down Verxlite API...")
-    # Close database connections
     session.remove()
 
 
-# Create FastAPI app
 app = FastAPI(
     title="Verxlite API",
     description="Universal AI Workflow Agent for Email + CRM + Documents",
     version="0.1.0",
-    docs_url="/docs" if settings.ENVIRONMENT == "development" else None,
-    redoc_url="/redoc" if settings.ENVIRONMENT == "development" else None,
-    openapi_url="/openapi.json" if settings.ENVIRONMENT == "development" else None,
+    docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
+    redoc_url="/redoc" if settings.ENVIRONMENT != "production" else None,
+    openapi_url="/openapi.json" if settings.ENVIRONMENT != "production" else None,
     lifespan=lifespan,
 )
 
-# Add request ID middleware
+
+# --------------------------------------------------------------------------- #
+# Middleware
+# --------------------------------------------------------------------------- #
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
-    """Add request ID to each request for tracing."""
-    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-    
-    # Add request ID to response headers
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
-    
     return response
 
 
-# Add timing middleware
 @app.middleware("http")
 async def add_timing_header(request: Request, call_next):
-    """Add timing header to responses."""
-    start_time = time.time()
+    start = time.time()
     response = await call_next(request)
-    process_time = time.time() - start_time
-    response.headers["X-Process-Time"] = f"{process_time:.4f}s"
+    response.headers["X-Process-Time"] = f"{(time.time() - start):.4f}s"
     return response
 
 
-# Add correlation ID middleware
 @app.middleware("http")
 async def add_correlation_id(request: Request, call_next):
-    """Add correlation ID for distributed tracing."""
-    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
-    
-    # Store correlation ID in request state
+    correlation_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
     request.state.correlation_id = correlation_id
-    
     response = await call_next(request)
     response.headers["X-Correlation-ID"] = correlation_id
-    
     return response
 
 
-# Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://verxlite.web.app",
-        "https://verxlite.dev",
+        settings.FRONTEND_URL,
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Correlation-ID"],
     expose_headers=["X-Request-ID", "X-Correlation-ID", "X-Process-Time"],
     max_age=600,
 )
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Mount static files only if the directory exists.
+_static_dir = Path(__file__).parent.parent / "static"
+if _static_dir.exists() and _static_dir.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+else:
+    logger.info(f"Static directory '{_static_dir}' not found; skipping StaticFiles mount")
 
 
+# --------------------------------------------------------------------------- #
 # Exception handlers
+# --------------------------------------------------------------------------- #
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle validation errors."""
-    errors = []
-    for error in exc.errors():
-        errors.append({
+    errors = [
+        {
             "field": ".".join(str(loc) for loc in error["loc"]),
             "message": error["msg"],
             "code": error.get("type", "value_error"),
-        })
-    
+        }
+        for error in exc.errors()
+    ]
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content=ValidationErrorResponse(
@@ -141,13 +125,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             details=errors,
             request_id=request.headers.get("X-Request-ID"),
             status_code=422,
-        ).model_dump(),
+        ).model_dump(mode="json"),
     )
 
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Handle HTTP exceptions."""
     if exc.status_code == status.HTTP_401_UNAUTHORIZED:
         response = AuthenticationErrorResponse(
             error="AuthenticationError",
@@ -170,12 +153,13 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             status_code=404,
         )
     elif exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        retry_after = exc.headers.get("Retry-After") if exc.headers else None
         response = RateLimitErrorResponse(
             error="RateLimitError",
             message=exc.detail or "Rate limit exceeded",
             request_id=request.headers.get("X-Request-ID"),
             status_code=429,
-            retry_after=exc.headers.get("Retry-After") if hasattr(exc, "headers") else None,
+            retry_after=int(retry_after) if retry_after else None,
         )
     else:
         response = InternalErrorResponse(
@@ -184,18 +168,12 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             request_id=request.headers.get("X-Request-ID"),
             status_code=exc.status_code or 500,
         )
-    
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=response.model_dump(),
-    )
+    return JSONResponse(status_code=exc.status_code, content=response.model_dump(mode="json"))
 
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
-    """Handle unexpected exceptions."""
-    logger.error(f"Unexpected error: {str(exc)}", exc_info=True)
-    
+    logger.error(f"Unexpected error: {exc}", exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=InternalErrorResponse(
@@ -203,40 +181,38 @@ async def generic_exception_handler(request: Request, exc: Exception):
             message="An unexpected error occurred",
             request_id=request.headers.get("X-Request-ID"),
             status_code=500,
-        ).model_dump(),
+        ).model_dump(mode="json"),
     )
 
 
-# Include routers
+# --------------------------------------------------------------------------- #
+# Routers — note: prefixes are added here, NOT in the routers themselves.
+# --------------------------------------------------------------------------- #
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(connections.router, prefix="/connections", tags=["connections"])
 app.include_router(workflows.router, prefix="/workflows", tags=["workflows"])
 app.include_router(artifacts.router, prefix="/artifacts", tags=["artifacts"])
 
 
-# Root endpoint
+# --------------------------------------------------------------------------- #
+# Root / health / metrics
+# --------------------------------------------------------------------------- #
 @app.get("/", tags=["root"])
 async def root():
     return {
         "name": "Verxlite API",
         "version": "0.1.0",
         "description": "Universal AI Workflow Agent",
-        "docs": "/docs" if settings.ENVIRONMENT == "development" else None,
+        "docs": "/docs" if settings.ENVIRONMENT != "production" else None,
         "health": "/health",
     }
 
 
-# Health check endpoint
 @app.get("/health", tags=["health"])
 async def health_check():
-    """
-    Health check endpoint.
-    
-    Returns:
-        - Database connectivity status
-        - Redis connectivity status
-        - Overall system health
-    """
+    """Health check endpoint — verifies DB and Redis connectivity."""
+    from verxlite_api.db.session import engine
+
     health_status = {
         "status": "healthy",
         "timestamp": time.time(),
@@ -245,78 +221,58 @@ async def health_check():
             "redis": {"status": "unknown"},
         },
     }
-    
-    # Check database
+
+    # DB
     try:
-        from verxlite_api.db.session import engine
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
+            conn.execute(text("SELECT 1"))
         health_status["checks"]["database"] = {"status": "healthy"}
     except Exception as e:
-        health_status["checks"]["database"] = {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+        health_status["checks"]["database"] = {"status": "unhealthy", "error": str(e)}
         health_status["status"] = "degraded"
-    
-    # Check Redis
+
+    # Redis (with bounded client lifetime)
     try:
         import redis
-        from verxlite_api.config import settings
-        r = redis.Redis.from_url(settings.REDIS_URL)
+        r = redis.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
         r.ping()
+        r.close()
         health_status["checks"]["redis"] = {"status": "healthy"}
     except Exception as e:
-        health_status["checks"]["redis"] = {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+        health_status["checks"]["redis"] = {"status": "unhealthy", "error": str(e)}
         health_status["status"] = "degraded"
-    
-    # Determine overall status
-    if all(check["status"] == "healthy" for check in health_status["checks"].values()):
+
+    if all(c["status"] == "healthy" for c in health_status["checks"].values()):
         health_status["status"] = "healthy"
-    elif any(check["status"] == "unhealthy" for check in health_status["checks"].values()):
-        health_status["status"] = "unhealthy"
-    
+    elif any(c["status"] == "unhealthy" for c in health_status["checks"].values()):
+        # If both are unhealthy, mark unhealthy; if only one, degraded.
+        unhealthy_count = sum(1 for c in health_status["checks"].values() if c["status"] == "unhealthy")
+        if unhealthy_count == len(health_status["checks"]):
+            health_status["status"] = "unhealthy"
+
     return health_status
 
 
-# Metrics endpoint
-@app.get("/metrics", tags=["metrics"])
+@app.get("/metrics", tags=["metrics"], response_class=PlainTextResponse)
 async def metrics():
-    """
-    Prometheus-compatible metrics endpoint.
-    
-    Returns:
-        - Workflow run metrics
-        - Step execution metrics
-        - Token usage metrics
-        - Error metrics
-    """
+    """Prometheus-format metrics endpoint."""
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
     from verxlite_api.observability.metrics import MetricsCollector
-    
-    metrics_collector = MetricsCollector()
-    metrics_data = metrics_collector.get_metrics()
-    
-    # Format metrics for Prometheus
-    prometheus_metrics = []
-    
-    for key, values in metrics_data.items():
-        for metric_name, metric_value in values.items():
-            if isinstance(metric_value, (int, float)):
-                prometheus_metrics.append(
-                    f"verxlite_{key.replace('.', '_').replace('-', '_')}_{metric_name} {metric_value}"
-                )
-    
-    return {
-        "metrics": prometheus_metrics,
-        "raw": metrics_data,
-    }
+
+    # Also dump in-memory metrics into the registry is non-trivial; we serve
+    # the standard process/HTTP metrics here, plus a JSON view from the
+    # MetricsCollector via /metrics/json for the in-memory ones.
+    return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/metrics/json", tags=["metrics"])
+async def metrics_json():
+    """In-memory workflow metrics (JSON, useful for debugging)."""
+    from verxlite_api.observability.metrics import MetricsCollector
+    return {"metrics": MetricsCollector().get_metrics()}
 
 
 # OpenAPI schema customization
-@app.get("/openapi.json")
+@app.get("/openapi.json", include_in_schema=False)
 async def get_openapi_schema():
-    """Get OpenAPI schema with customizations."""
     return app.openapi()

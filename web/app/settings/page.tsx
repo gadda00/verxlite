@@ -47,7 +47,7 @@ const mockConnections = [
 ];
 
 export default function SettingsPage() {
-  const { isSignedIn, user } = useUser();
+  const { isLoaded, isSignedIn, user } = useUser();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("profile");
   const [userData, setUserData] = useState(mockUser);
@@ -58,10 +58,10 @@ export default function SettingsPage() {
   const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isSignedIn) {
+    if (isLoaded && !isSignedIn) {
       router.push("/login");
     }
-  }, [isSignedIn, router]);
+  }, [isLoaded, isSignedIn, router]);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
@@ -126,7 +126,7 @@ export default function SettingsPage() {
     return <Badge variant="default">Active</Badge>;
   };
 
-  if (!isSignedIn) {
+  if (!isLoaded || !isSignedIn) {
     return <div>Loading...</div>;
   }
 

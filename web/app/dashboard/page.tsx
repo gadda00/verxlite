@@ -71,17 +71,17 @@ const mockStats = {
 };
 
 export default function DashboardPage() {
-  const { isSignedIn, user } = useUser();
+  const { isLoaded, isSignedIn, user } = useUser();
   const router = useRouter();
   const [workflowRuns, setWorkflowRuns] = useState(mockWorkflowRuns);
   const [connections, setConnections] = useState(mockConnections);
   const [stats, setStats] = useState(mockStats);
 
   useEffect(() => {
-    if (!isSignedIn) {
+    if (isLoaded && !isSignedIn) {
       router.push("/login");
     }
-  }, [isSignedIn, router]);
+  }, [isLoaded, isSignedIn, router]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {

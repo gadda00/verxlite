@@ -2,7 +2,7 @@
 Artifact Model
 """
 
-from sqlalchemy import Column, String, Text, ForeignKey, JSON, DateTime, Index, Enum
+from sqlalchemy import Column, String, Text, ForeignKey, JSON, DateTime, Index, Enum, Integer
 from sqlalchemy.orm import relationship
 from enum import Enum as PyEnum
 from verxlite_api.db.base import BaseModel
@@ -64,23 +64,23 @@ class Artifact(BaseModel):
     
     # Artifact information
     artifact_type = Column(
-        Enum(ArtifactType, name="artifact_type_enum", create_type=True),
+        Enum(ArtifactType, name="artifact_type_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
         nullable=False
     )
     external_id = Column(String(255), nullable=True)  # ID from the external system
     external_url = Column(Text, nullable=True)  # Deep link to the artifact
     status = Column(
-        Enum(ArtifactStatus, name="artifact_status_enum", create_type=True),
+        Enum(ArtifactStatus, name="artifact_status_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
         default=ArtifactStatus.CREATED,
         nullable=False
     )
     
     # Content (sanitized)
     content_summary = Column(Text, nullable=True)
-    content_data = Column(JSON, nullable=True, default={})
+    content_data = Column(JSON, nullable=True, default=dict)
     
     # Metadata
-    metadata = Column(JSON, nullable=True, default={})
+    extra_metadata = Column(JSON, nullable=True, default=dict)
     
     # Hierarchy
     parent_artifact_id = Column(String(36), ForeignKey("artifacts.id"), nullable=True)
@@ -91,9 +91,8 @@ class Artifact(BaseModel):
     file_name = Column(String(255), nullable=True)
 
     # Relationships
-    workflow_run = relationship("WorkflowRun")
-    parent_artifact = relationship("Artifact", remote_side=[id], foreign_keys=[parent_artifact_id])
-    child_artifacts = relationship("Artifact", foreign_keys=[parent_artifact_id], backref="parent")
+    # `workflow_run` is created via backref on WorkflowRun.artifacts.
+    # NOTE: self-referential parent_artifact / child_artifacts omitted (see WorkflowRun note).
 
     @property
     def is_file(self) -> bool:
@@ -127,7 +126,7 @@ class Artifact(BaseModel):
             "status": self.status.value,
             "content_summary": self.content_summary,
             "content_data": self.content_data,
-            "metadata": self.metadata,
+            "metadata": self.extra_metadata,
             "parent_artifact_id": self.parent_artifact_id,
             "size_bytes": self.size_bytes,
             "mime_type": self.mime_type,

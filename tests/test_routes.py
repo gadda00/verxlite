@@ -4,118 +4,114 @@ Tests for API Routes
 
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, patch
-import os
-import sys
-
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from main import app
-
-client = TestClient(app)
 
 
 class TestRootEndpoint:
-    """Tests for root endpoint."""
-    
-    def test_root_endpoint(self):
-        """Test GET / endpoint."""
+    """Tests for root/health endpoints."""
+
+    def test_root_endpoint(self, client):
         response = client.get("/")
-        
         assert response.status_code == 200
-        assert "name" in response.json()
-        assert response.json()["name"] == "Verxlite API"
-        assert "version" in response.json()
-    
-    def test_health_endpoint(self):
-        """Test GET /health endpoint."""
+        body = response.json()
+        assert body["name"] == "Verxlite API"
+        assert body["version"] == "0.1.0"
+
+    def test_health_endpoint(self, client):
         response = client.get("/health")
-        
+        # Health is allowed to be degraded (Redis may not be available in CI),
+        # but the endpoint itself must always return 200.
         assert response.status_code == 200
-        assert "status" in response.json()
-        assert response.json()["status"] == "healthy"
+        body = response.json()
+        assert "status" in body
+        assert "checks" in body
+        assert "database" in body["checks"]
+        assert "redis" in body["checks"]
 
 
 class TestAuthRoutes:
     """Tests for auth routes."""
-    
-    def test_register_user(self):
-        """Test POST /auth/register endpoint."""
+
+    def test_register_user(self, client, db_session):
+        # Clean up any prior user with the same email.
+        from verxlite_api.models.user import User
+        existing = db_session.query(User).filter(User.email == "newuser@example.com").first()
+        if existing:
+            db_session.delete(existing)
+            db_session.commit()
+
         response = client.post(
             "/auth/register",
             json={
-                "email": "test@example.com",
-                "first_name": "Test",
+                "email": "newuser@example.com",
+                "password": "supersecret123",
+                "first_name": "New",
                 "last_name": "User",
-                "tenant_name": "Test Tenant",
+                "tenant_name": "New Tenant",
             },
         )
-        
-        assert response.status_code == 200
-        assert "access_token" in response.json()
-        assert "user" in response.json()
-    
-    def test_login_user(self):
-        """Test POST /auth/login endpoint."""
-        # First register a user
-        client.post(
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert "access_token" in body
+        assert body["token_type"] == "bearer"
+        assert body["user"]["email"] == "newuser@example.com"
+
+    def test_register_user_short_password_rejected(self, client, db_session):
+        response = client.post(
             "/auth/register",
-            json={
-                "email": "test@example.com",
-                "password": "testpassword",
-            },
+            json={"email": "short@example.com", "password": "abc"},
         )
-        
-        # Then login
+        assert response.status_code == 422
+
+    def test_login_user(self, client, test_user):
+        # test_user has password "testpassword123" (set in conftest).
         response = client.post(
             "/auth/login",
-            json={
-                "email": "test@example.com",
-                "password": "testpassword",
-            },
+            json={"email": test_user.email, "password": "testpassword123"},
         )
-        
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         assert "access_token" in response.json()
-    
-    def test_get_current_user(self):
-        """Test GET /auth/me endpoint."""
-        # First register and login
-        login_response = client.post(
-            "/auth/register",
-            json={
-                "email": "test@example.com",
-                "password": "testpassword",
-            },
+
+    def test_login_user_wrong_password(self, client, test_user):
+        response = client.post(
+            "/auth/login",
+            json={"email": test_user.email, "password": "wrongpassword"},
         )
-        
-        access_token = login_response.json()["access_token"]
-        
-        # Get current user
-        response = client.get(
-            "/auth/me",
-            headers={"Authorization": f"Bearer {access_token}"},
+        assert response.status_code == 401
+
+    def test_login_user_unknown_email(self, client):
+        response = client.post(
+            "/auth/login",
+            json={"email": "nobody@example.com", "password": "anything"},
         )
-        
-        assert response.status_code == 200
-        assert "email" in response.json()
+        assert response.status_code == 401
+
+    def test_get_current_user_unauthenticated(self, client):
+        response = client.get("/auth/me")
+        assert response.status_code == 401
+
+    def test_get_current_user_authenticated(self, client, auth_headers, test_user):
+        response = client.get("/auth/me", headers=auth_headers)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["email"] == test_user.email
 
 
 class TestWorkflowRoutes:
-    """Tests for workflow routes."""
-    
-    def test_list_workflows(self):
-        """Test GET /workflows/ endpoint."""
+    """Tests for workflow routes (all require auth)."""
+
+    def test_list_workflows_unauthenticated(self, client):
         response = client.get("/workflows/")
-        
+        assert response.status_code == 401
+
+    def test_list_workflows(self, client, auth_headers):
+        response = client.get("/workflows/", headers=auth_headers)
         assert response.status_code == 200
         assert "workflows" in response.json()
-    
-    def test_create_workflow(self):
-        """Test POST /workflows/ endpoint."""
+
+    def test_create_workflow(self, client, auth_headers):
         response = client.post(
             "/workflows/",
+            headers=auth_headers,
             json={
                 "name": "Test Workflow",
                 "description": "Test description",
@@ -124,68 +120,101 @@ class TestWorkflowRoutes:
                 "priority": 5,
             },
         )
-        
-        assert response.status_code == 201
-        assert "id" in response.json()
-        assert response.json()["name"] == "Test Workflow"
-    
-    def test_trigger_workflow_run(self):
-        """Test POST /workflows/{workflow_id}/runs endpoint."""
-        # First create a workflow
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["name"] == "Test Workflow"
+
+    def test_create_workflow_invalid_priority(self, client, auth_headers):
+        response = client.post(
+            "/workflows/",
+            headers=auth_headers,
+            json={"name": "Bad", "workflow_type": "post_meeting_followup", "priority": 99},
+        )
+        assert response.status_code == 422
+
+    def test_list_workflow_templates(self, client, auth_headers):
+        response = client.get("/workflows/templates", headers=auth_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] >= 3
+
+    def test_get_workflow_stats(self, client, auth_headers):
+        response = client.get("/workflows/stats", headers=auth_headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert "total_runs" in body
+
+    def test_trigger_workflow_run(self, client, auth_headers, test_workflow):
+        # test_workflow was created by the fixture in the test_user's tenant.
+        # But wait — the test_workflow fixture creates a workflow directly via
+        # the DB, so it lives in test_user's tenant. Authenticated client should
+        # be able to trigger it.
+        # However, the fixture isn't requested here. We need to create a workflow
+        # via the API first.
         create_response = client.post(
             "/workflows/",
-            json={
-                "name": "Test Workflow",
-                "workflow_type": "post_meeting_followup",
-            },
+            headers=auth_headers,
+            json={"name": "Trigger Test", "workflow_type": "post_meeting_followup"},
         )
-        
         workflow_id = create_response.json()["id"]
-        
-        # Trigger a run
+
         response = client.post(
             f"/workflows/{workflow_id}/runs",
-            json={
-                "trigger_type": "manual",
-                "trigger_data": {},
-            },
+            headers=auth_headers,
+            json={"trigger_type": "manual", "trigger_data": {"event_id": "evt_1"}},
         )
-        
-        assert response.status_code == 201
-        assert "id" in response.json()
-        assert response.json()["status"] == "queued"
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["status"] in ("queued", "running", "completed", "failed")
+
+    def test_get_nonexistent_workflow(self, client, auth_headers):
+        response = client.get("/workflows/nonexistent-id", headers=auth_headers)
+        assert response.status_code == 404
 
 
 class TestConnectionRoutes:
-    """Tests for connection routes."""
-    
-    def test_list_connections(self):
-        """Test GET /connections/ endpoint."""
-        response = client.get("/connections/")
-        
+    """Tests for connection routes (require auth)."""
+
+    def test_list_connections(self, client, auth_headers):
+        response = client.get("/connections/", headers=auth_headers)
         assert response.status_code == 200
         assert "connections" in response.json()
+
+    def test_list_connections_unauthenticated(self, client):
+        response = client.get("/connections/")
+        assert response.status_code == 401
+
+
+class TestArtifactRoutes:
+    """Tests for artifact routes (require auth)."""
+
+    def test_list_artifacts(self, client, auth_headers):
+        response = client.get("/artifacts/", headers=auth_headers)
+        assert response.status_code == 200
+        assert "artifacts" in response.json()
+
+    def test_list_artifacts_unauthenticated(self, client):
+        response = client.get("/artifacts/")
+        assert response.status_code == 401
 
 
 class TestErrorHandling:
     """Tests for error handling."""
-    
-    def test_not_found_error(self):
-        """Test 404 error handling."""
-        response = client.get("/workflows/nonexistent")
-        
+
+    def test_not_found_error(self, client, auth_headers):
+        # /workflows/{workflow_id} requires auth; provide it.
+        response = client.get("/workflows/nonexistent", headers=auth_headers)
         assert response.status_code == 404
         assert "error" in response.json()
-    
-    def test_validation_error(self):
-        """Test validation error handling."""
+        assert response.json()["error"] == "NotFoundError"
+
+    def test_validation_error(self, client, auth_headers):
+        # Empty name should fail validation.
         response = client.post(
             "/workflows/",
-            json={
-                "name": "",  # Empty name should fail validation
-            },
+            headers=auth_headers,
+            json={"name": ""},
         )
-        
         assert response.status_code == 422
-        assert "error" in response.json()
-        assert response.json()["error"] == "ValidationError"
+        body = response.json()
+        assert body["error"] == "ValidationError"

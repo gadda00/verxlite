@@ -6,12 +6,12 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  DOCKER_COMPOSE_VERSION: "2.23.0"
-
 jobs:
-  test:
-    name: Test Backend
+  # ------------------------------------------------------------------
+  # Backend tests
+  # ------------------------------------------------------------------
+  test-backend:
+    name: Backend Tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -19,15 +19,23 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: verxlite
+          POSTGRES_DB: verxlite_test
         ports:
           - 5432:5432
-        options: --health-cmd pg_isready -U postgres --health-interval 10s --health-timeout 5s --health-retries 5
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
       redis:
         image: redis:7-alpine
         ports:
           - 6379:6379
-        options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout code
@@ -44,34 +52,137 @@ jobs:
           virtualenvs-create: true
           virtualenvs-in-project: true
 
+      - name: Cache Poetry venv
+        uses: actions/cache@v4
+        with:
+          path: api/.venv
+          key: ${{ runner.os }}-poetry-${{ hashFiles('api/poetry.lock') }}
+          restore-keys: ${{ runner.os }}-poetry-
+
       - name: Install dependencies
         run: |
           cd api
           poetry install --no-interaction --no-ansi
 
-      - name: Run linting
+      - name: Run linting (ruff)
         run: |
           cd api
           poetry run ruff check .
-          poetry run black --check .
 
-      - name: Run tests
+      - name: Run formatting check (black)
         run: |
           cd api
-          poetry run pytest tests/ -v
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/verxlite
-          REDIS_URL: redis://localhost:6379/0
+          poetry run black --check .
 
-  build:
-    name: Build and Push Docker Images
-    needs: test
+      - name: Run type checking (mypy)
+        run: |
+          cd api
+          poetry run mypy verxlite_api --ignore-missing-imports || true
+
+      - name: Run tests
+        # IMPORTANT: run from the repo root so `tests/` is found.
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/verxlite_test
+          REDIS_URL: redis://localhost:6379/0
+          ENVIRONMENT: test
+          DEBUG: "false"
+        run: |
+          cd api
+          poetry run pytest ../tests/ -v --cov=verxlite_api --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: api/coverage.xml
+
+  # ------------------------------------------------------------------
+  # Frontend tests / lint / build
+  # ------------------------------------------------------------------
+  test-frontend:
+    name: Frontend Tests
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd web
+          npm install --legacy-peer-deps
+
+      - name: Lint
+        run: |
+          cd web
+          npm run lint
+        continue-on-error: true  # ESLint config not yet strict
+
+      - name: Type check
+        run: |
+          cd web
+          npx tsc --noEmit
+
+      - name: Build
+        run: |
+          cd web
+          npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_dummy
+
+  # ------------------------------------------------------------------
+  # Security scan
+  # ------------------------------------------------------------------
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Scan backend deps
+        run: |
+          cd api
+          pip-audit --require-hashes --strict --desc
+
+      - name: Run npm audit
+        run: |
+          cd web
+          npm audit --omit=dev --audit-level=high || true
+
+  # ------------------------------------------------------------------
+  # Build Docker images (only on main)
+  # ------------------------------------------------------------------
+  build:
+    name: Build Docker Images
+    needs: [test-backend, test-frontend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -80,41 +191,57 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
       - name: Build and push API image
-        run: |
-          cd api
-          docker build -t verxlite/api:${{ github.sha }} .
-          docker tag verxlite/api:${{ github.sha }} verxlite/api:latest
-          docker push verxlite/api:${{ github.sha }}
-          docker push verxlite/api:latest
+        uses: docker/build-push-action@v5
+        with:
+          context: ./api
+          push: true
+          tags: |
+            verxlite/api:${{ github.sha }}
+            verxlite/api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build and push Worker image
-        run: |
-          cd worker
-          docker build -t verxlite/worker:${{ github.sha }} .
-          docker tag verxlite/worker:${{ github.sha }} verxlite/worker:latest
-          docker push verxlite/worker:${{ github.sha }}
-          docker push verxlite/worker:latest
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./worker/Dockerfile
+          push: true
+          tags: |
+            verxlite/worker:${{ github.sha }}
+            verxlite/worker:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build and push Web image
-        run: |
-          cd web
-          docker build -t verxlite/web:${{ github.sha }} .
-          docker tag verxlite/web:${{ github.sha }} verxlite/web:latest
-          docker push verxlite/web:${{ github.sha }}
-          docker push verxlite/web:latest
+        uses: docker/build-push-action@v5
+        with:
+          context: ./web
+          push: true
+          tags: |
+            verxlite/web:${{ github.sha }}
+            verxlite/web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
+  # ------------------------------------------------------------------
+  # Deploy (only on main, manual approval required via environment)
+  # ------------------------------------------------------------------
   deploy:
     name: Deploy to Production
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: https://verxlite.dev
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install Flyctl
-        run: curl -L https://fly.io/install.sh | sh
+        uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Deploy API
         run: flyctl deploy --app verxlite-api --image verxlite/api:latest

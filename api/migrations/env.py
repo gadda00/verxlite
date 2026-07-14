@@ -1,11 +1,7 @@
 from logging.config import fileConfig
 
 from alembic import context
-from alembic.config import Config
-from alembic.runtime.environment import EnvironmentContext
-from alembic.script import ScriptDirectory
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -17,21 +13,20 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-from verxlite_api.db.base import Base
-from verxlite_api.models.tenant import Tenant
-from verxlite_api.models.user import User
-from verxlite_api.models.connection import Connection
-from verxlite_api.models.workflow import Workflow
-from verxlite_api.models.workflow_run import WorkflowRun
-from verxlite_api.models.workflow_step import WorkflowStep
-from verxlite_api.models.artifact import Artifact
+from verxlite_api.db.base import Base  # noqa: E402
+from verxlite_api.models.tenant import Tenant  # noqa: E402,F401
+from verxlite_api.models.user import User  # noqa: E402,F401
+from verxlite_api.models.connection import Connection  # noqa: E402,F401
+from verxlite_api.models.workflow import Workflow  # noqa: E402,F401
+from verxlite_api.models.workflow_run import WorkflowRun  # noqa: E402,F401
+from verxlite_api.models.workflow_step import WorkflowStep  # noqa: E402,F401
+from verxlite_api.models.artifact import Artifact  # noqa: E402,F401
 
 target_metadata = Base.metadata
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
+# Override the URL from alembic.ini with the runtime settings value.
+from verxlite_api.config import settings  # noqa: E402
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 
 def run_migrations_offline():
@@ -42,6 +37,8 @@ def run_migrations_offline():
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_options={"paramstyle": "named"},
+        compare_type=True,
+        compare_server_default=True,
     )
 
     with context.begin_transaction():

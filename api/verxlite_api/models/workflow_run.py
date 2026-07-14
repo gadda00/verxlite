@@ -73,14 +73,14 @@ class WorkflowRun(BaseModel):
     
     # Trigger information
     trigger_type = Column(
-        Enum(WorkflowRunTriggerType, name="workflow_run_trigger_type_enum", create_type=True),
+        Enum(WorkflowRunTriggerType, name="workflow_run_trigger_type_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
         nullable=False
     )
-    trigger_data = Column(JSON, nullable=True, default={})  # e.g., {event_id: 'abc123'}
+    trigger_data = Column(JSON, nullable=True, default=dict)  # e.g., {event_id: 'abc123'}
     
     # Execution status
     status = Column(
-        Enum(WorkflowRunStatus, name="workflow_run_status_enum", create_type=True),
+        Enum(WorkflowRunStatus, name="workflow_run_status_enum", create_type=True, values_callable=lambda x: [e.value for e in x]),
         default=WorkflowRunStatus.PENDING,
         nullable=False
     )
@@ -105,14 +105,16 @@ class WorkflowRun(BaseModel):
     completed_at = Column(DateTime, nullable=True)
     
     # Metadata
-    metadata = Column(JSON, nullable=True, default={})
+    extra_metadata = Column(JSON, nullable=True, default=dict)
 
     # Relationships
     tenant = relationship("Tenant")
-    user = relationship("User")
-    workflow = relationship("Workflow")
-    parent_run = relationship("WorkflowRun", remote_side=[id], foreign_keys=[parent_run_id])
-    child_runs = relationship("WorkflowRun", foreign_keys=[parent_run_id], backref="parent")
+    # `user` is created via backref on User.workflow_runs.
+    # `workflow` is created via backref on Workflow.runs.
+    # NOTE: self-referential parent_run / child_runs omitted to avoid SQLAlchemy
+    # 2.x remote_side string-resolution issues with the inherited `id` column
+    # (which collides with Python's builtin `id`). Query child runs explicitly
+    # via `db.query(WorkflowRun).filter(WorkflowRun.parent_run_id == run.id)`.
     steps = relationship("WorkflowStep", backref="workflow_run", cascade="all, delete-orphan")
     artifacts = relationship("Artifact", backref="workflow_run", cascade="all, delete-orphan")
 
@@ -160,7 +162,7 @@ class WorkflowRun(BaseModel):
             "scheduled_for": self.scheduled_for.isoformat() if self.scheduled_for else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
-            "metadata": self.metadata,
+            "metadata": self.extra_metadata,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }

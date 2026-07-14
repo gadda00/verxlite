@@ -99,7 +99,7 @@ const providerConfig = {
 };
 
 export default function ConnectionsPage() {
-  const { isSignedIn, user } = useUser();
+  const { isLoaded, isSignedIn, user } = useUser();
   const router = useRouter();
   const [connections, setConnections] = useState(mockConnections);
   const [isLoading, setIsLoading] = useState(true);
@@ -108,15 +108,15 @@ export default function ConnectionsPage() {
   const [syncing, setSyncing] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isSignedIn) {
+    if (isLoaded && !isSignedIn) {
       router.push("/login");
-    } else {
+    } else if (isLoaded && isSignedIn) {
       // In production, fetch connections from API
       setTimeout(() => {
         setIsLoading(false);
       }, 1000);
     }
-  }, [isSignedIn, router]);
+  }, [isLoaded, isSignedIn, router]);
 
   const getStatusBadge = (isActive: boolean, isExpired: boolean, syncStatus?: string) => {
     if (!isActive) {
@@ -198,7 +198,7 @@ export default function ConnectionsPage() {
     return date.toLocaleString();
   };
 
-  if (!isSignedIn) {
+  if (!isLoaded || !isSignedIn) {
     return <div>Loading...</div>;
   }
 

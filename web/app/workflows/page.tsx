@@ -99,7 +99,7 @@ const workflowTemplates = [
 const workflowCategories = ["All", "Sales", "Support", "Operations", "Management", "Custom"];
 
 export default function WorkflowsPage() {
-  const { isSignedIn, user } = useUser();
+  const { isLoaded, isSignedIn, user } = useUser();
   const router = useRouter();
   const [workflows, setWorkflows] = useState(mockWorkflows);
   const [isLoading, setIsLoading] = useState(true);
@@ -109,15 +109,15 @@ export default function WorkflowsPage() {
   const [showTemplates, setShowTemplates] = useState(false);
 
   useEffect(() => {
-    if (!isSignedIn) {
+    if (isLoaded && !isSignedIn) {
       router.push("/login");
-    } else {
+    } else if (isLoaded && isSignedIn) {
       // In production, fetch workflows from API
       setTimeout(() => {
         setIsLoading(false);
       }, 1000);
     }
-  }, [isSignedIn, router]);
+  }, [isLoaded, isSignedIn, router]);
 
   const getStatusBadge = (status: string, isActive: boolean) => {
     if (!isActive) {
@@ -226,7 +226,7 @@ export default function WorkflowsPage() {
         return template?.category === selectedCategory;
       });
 
-  if (!isSignedIn) {
+  if (!isLoaded || !isSignedIn) {
     return <div>Loading...</div>;
   }
 
@@ -328,9 +328,9 @@ export default function WorkflowsPage() {
                   variant={selectedCategory === category ? "default" : "outline"}
                   size="sm"
                   onClick={() => setSelectedCategory(category)}
-                  className={`{
-                    selectedCategory === category 
-                      ? "bg-verxlite-neon text-verxlite-dark" 
+                  className={`${
+                    selectedCategory === category
+                      ? "bg-verxlite-neon text-verxlite-dark"
                       : ""
                   }`}
                 >
@@ -527,7 +527,7 @@ export default function WorkflowsPage() {
             </div>
           </div>
         ) : (
-          {/* Templates */}
+          // Templates view
           <div className="space-y-8">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold text-gray-900">Workflow Templates</h2>

@@ -2,7 +2,7 @@
 Tenant Model
 """
 
-from sqlalchemy import Column, String, Text, DateTime, Boolean, func, Index
+from sqlalchemy import Column, String, Text, DateTime, Boolean, func, Index, text
 from sqlalchemy.sql import expression
 from verxlite_api.db.base import BaseModel
 
@@ -10,7 +10,7 @@ from verxlite_api.db.base import BaseModel
 class Tenant(BaseModel):
     """
     Represents a company/workspace.
-    
+
     Attributes:
         name: Name of the tenant/company
         description: Optional description
@@ -24,8 +24,8 @@ class Tenant(BaseModel):
     """
     __tablename__ = "tenants"
     __table_args__ = (
-        Index("ix_tenant_name", "name", unique=True, postgresql_where=(name.isnot(None))),
-        Index("ix_tenant_domain", "domain", unique=True, postgresql_where=(domain.isnot(None))),
+        Index("ix_tenant_name", "name", unique=True, postgresql_where=text("name IS NOT NULL")),
+        Index("ix_tenant_domain", "domain", unique=True, postgresql_where=text("domain IS NOT NULL")),
         Index("ix_tenant_active", "is_active"),
     )
 

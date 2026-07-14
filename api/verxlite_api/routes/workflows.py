@@ -3,20 +3,18 @@ Workflows Routes
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import time
 
-from verxlite_api.config import settings
 from verxlite_api.db.session import get_db
+from verxlite_api.models.user import User
 from verxlite_api.models.workflow import Workflow, WorkflowType, WorkflowStatus
 from verxlite_api.models.workflow_run import WorkflowRun, WorkflowRunStatus, WorkflowRunTriggerType
-from verxlite_api.models.workflow_step import WorkflowStep
+from verxlite_api.models.workflow_step import WorkflowStep, WorkflowStepStatus, WorkflowStepType
 from verxlite_api.models.artifact import Artifact
-from verxlite_api.models.connection import Connection
 from verxlite_api.schemas.workflow import (
     WorkflowCreate,
     WorkflowUpdate,
@@ -32,17 +30,13 @@ from verxlite_api.schemas.workflow_run import (
     WorkflowRunDetailResponse,
     WorkflowRunStatsResponse,
 )
-from verxlite_api.schemas.error import NotFoundErrorResponse, AuthorizationErrorResponse
 from verxlite_api.utils.logger import get_logger
-from verxlite_api.services.workflow_engine import WorkflowEngine
-from verxlite_api.observability.langfuse import LangfuseTracer
-from verxlite_api.observability.metrics import MetricsCollector
+from verxlite_api.deps import get_current_user
 
-router = APIRouter(prefix="/workflows", tags=["workflows"])
+router = APIRouter(tags=["workflows"])
 logger = get_logger("workflows")
 
 
-# Pagination parameters
 class PaginationParams:
     def __init__(
         self,
@@ -54,503 +48,15 @@ class PaginationParams:
         self.offset = (page - 1) * page_size
 
 
-@router.get("/", response_model=WorkflowListResponse)
-async def list_workflows(
-    request: Request,
-    db=Depends(get_db),
-    pagination: PaginationParams = Depends(),
-    workflow_type: Optional[WorkflowType] = Query(None, description="Filter by workflow type"),
-    status: Optional[WorkflowStatus] = Query(None, description="Filter by status"),
-    is_active: Optional[bool] = Query(None, description="Filter by active status"),
-    search: Optional[str] = Query(None, description="Search in name and description"),
-):
-    """
-    List all workflows for the current tenant.
-    
-    Supports:
-    - Pagination
-    - Filtering by type, status, active status
-    - Search in name and description
-    """
-    # Get current user from JWT (in production, use real auth)
-    tenant_id = "test-tenant-id"  # Replace with real tenant ID from auth
-    
-    query = db.query(Workflow).filter(Workflow.tenant_id == tenant_id)
-    
-    # Apply filters
-    if workflow_type:
-        query = query.filter(Workflow.workflow_type == workflow_type)
-    
-    if status:
-        query = query.filter(Workflow.status == status)
-    
-    if is_active is not None:
-        query = query.filter(Workflow.is_active == is_active)
-    
-    if search:
-        search_pattern = f"%{search}%"
-        query = query.filter(
-            (Workflow.name.ilike(search_pattern)) |
-            (Workflow.description.ilike(search_pattern))
-        )
-    
-    # Get total count
-    total = query.count()
-    
-    # Apply pagination
-    workflows = query.order_by(
-        Workflow.priority.desc(),
-        Workflow.name.asc()
-    ).offset(pagination.offset).limit(pagination.page_size).all()
-    
-    return WorkflowListResponse(
-        workflows=[WorkflowResponse.from_orm(wf) for wf in workflows],
-        total=total,
-        page=pagination.page,
-        page_size=pagination.page_size,
-    )
-
-
-@router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
-async def create_workflow(
-    request: Request,
-    workflow_data: WorkflowCreate,
-    db=Depends(get_db),
-):
-    """
-    Create a new workflow.
-    """
-    # Get current user from JWT (in production, use real auth)
-    tenant_id = "test-tenant-id"
-    user_id = "test-user-id"
-    
-    # Check if workflow with same name already exists
-    existing = db.query(Workflow).filter(
-        Workflow.tenant_id == tenant_id,
-        Workflow.name == workflow_data.name,
-    ).first()
-    
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Workflow with name '{workflow_data.name}' already exists",
-        )
-    
-    # Create workflow
-    workflow = Workflow(
-        tenant_id=tenant_id,
-        created_by=user_id,
-        name=workflow_data.name,
-        description=workflow_data.description,
-        workflow_type=workflow_data.workflow_type,
-        config=workflow_data.config or {},
-        trigger_config=workflow_data.trigger_config or {},
-        priority=workflow_data.priority or 5,
-    )
-    
-    db.add(workflow)
-    db.commit()
-    db.refresh(workflow)
-    
-    logger.info(f"Created workflow: {workflow.id}")
-    
-    return WorkflowResponse.from_orm(workflow)
-
-
-@router.get("/{workflow_id}", response_model=WorkflowResponse)
-async def get_workflow(
-    workflow_id: str,
-    request: Request,
-    db=Depends(get_db),
-):
-    """
-    Get a specific workflow by ID.
-    """
-    tenant_id = "test-tenant-id"  # Replace with real tenant ID from auth
-    
-    workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.tenant_id == tenant_id,
-    ).first()
-    
-    if not workflow:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow not found: {workflow_id}",
-        )
-    
-    return WorkflowResponse.from_orm(workflow)
-
-
-@router.put("/{workflow_id}", response_model=WorkflowResponse)
-async def update_workflow(
-    workflow_id: str,
-    request: Request,
-    workflow_data: WorkflowUpdate,
-    db=Depends(get_db),
-):
-    """
-    Update a workflow.
-    """
-    tenant_id = "test-tenant-id"  # Replace with real tenant ID from auth
-    
-    workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.tenant_id == tenant_id,
-    ).first()
-    
-    if not workflow:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow not found: {workflow_id}",
-        )
-    
-    # Update fields
-    if workflow_data.name is not None:
-        workflow.name = workflow_data.name
-    if workflow_data.description is not None:
-        workflow.description = workflow_data.description
-    if workflow_data.config is not None:
-        workflow.config = workflow_data.config
-    if workflow_data.trigger_config is not None:
-        workflow.trigger_config = workflow_data.trigger_config
-    if workflow_data.is_active is not None:
-        workflow.is_active = workflow_data.is_active
-    if workflow_data.status is not None:
-        workflow.status = workflow_data.status
-    if workflow_data.priority is not None:
-        workflow.priority = workflow_data.priority
-    
-    workflow.updated_at = datetime.utcnow()
-    
-    db.commit()
-    db.refresh(workflow)
-    
-    logger.info(f"Updated workflow: {workflow.id}")
-    
-    return WorkflowResponse.from_orm(workflow)
-
-
-@router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_workflow(
-    workflow_id: str,
-    request: Request,
-    db=Depends(get_db),
-):
-    """
-    Delete a workflow.
-    """
-    tenant_id = "test-tenant-id"  # Replace with real tenant ID from auth
-    
-    workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.tenant_id == tenant_id,
-    ).first()
-    
-    if not workflow:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow not found: {workflow_id}",
-        )
-    
-    # Soft delete (set is_active to False)
-    workflow.is_active = False
-    workflow.status = WorkflowStatus.ARCHIVED
-    workflow.updated_at = datetime.utcnow()
-    
-    db.commit()
-    
-    logger.info(f"Deleted workflow: {workflow.id}")
-    
-    return None
-
-
-@router.post("/{workflow_id}/runs", response_model=WorkflowRunResponse, status_code=status.HTTP_201_CREATED)
-async def trigger_workflow_run(
-    workflow_id: str,
-    request: Request,
-    run_data: WorkflowRunCreate,
-    db=Depends(get_db),
-):
-    """
-    Trigger a workflow run.
-    
-    This endpoint:
-    - Creates a workflow run record
-    - Adds it to the queue for processing
-    - Returns the run ID for tracking
-    """
-    tenant_id = "test-tenant-id"  # Replace with real tenant ID from auth
-    user_id = "test-user-id"  # Replace with real user ID from auth
-    
-    # Get workflow
-    workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_id,
-        Workflow.tenant_id == tenant_id,
-    ).first()
-    
-    if not workflow:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow not found: {workflow_id}",
-        )
-    
-    if not workflow.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot run inactive workflow",
-        )
-    
-    # Check for duplicate idempotency key
-    if run_data.idempotency_key:
-        existing_run = db.query(WorkflowRun).filter(
-            WorkflowRun.idempotency_key == run_data.idempotency_key,
-            WorkflowRun.tenant_id == tenant_id,
-        ).first()
-        
-        if existing_run:
-            logger.info(f"Duplicate run detected for idempotency key: {run_data.idempotency_key}")
-            return WorkflowRunResponse.from_orm(existing_run)
-    
-    # Create workflow run
-    run_id = str(uuid.uuid4())
-    workflow_run = WorkflowRun(
-        id=run_id,
-        tenant_id=tenant_id,
-        user_id=user_id,
-        workflow_id=workflow_id,
-        trigger_type=run_data.trigger_type,
-        trigger_data=run_data.trigger_data or {},
-        status=WorkflowRunStatus.PENDING,
-        idempotency_key=run_data.idempotency_key or f"{workflow_id}_{run_data.trigger_type}_{int(time.time())}",
-        scheduled_for=run_data.scheduled_for,
-    )
-    
-    db.add(workflow_run)
-    db.commit()
-    db.refresh(workflow_run)
-    
-    # Add initial step
-    step = WorkflowStep(
-        run_id=run_id,
-        step_type="trigger",
-        step_name="Workflow triggered",
-        status="completed",
-        order=0,
-        latency_ms=0,
-        tokens_used=0,
-    )
-    db.add(step)
-    db.commit()
-    
-    # In production, add to queue here
-    # from verxlite_api.tasks import execute_workflow_run
-    # execute_workflow_run.delay(
-    #     workflow_id=workflow_id,
-    #     tenant_id=tenant_id,
-    #     user_id=user_id,
-    #     trigger_type=run_data.trigger_type.value,
-    #     trigger_data=run_data.trigger_data or {},
-    # )
-    
-    # For now, mark as queued
-    workflow_run.status = WorkflowRunStatus.QUEUED
-    db.commit()
-    
-    logger.info(f"Triggered workflow run: {run_id}")
-    
-    return WorkflowRunResponse.from_orm(workflow_run)
-
-
-@router.get("/runs/{run_id}", response_model=WorkflowRunDetailResponse)
-async def get_workflow_run(
-    run_id: str,
-    request: Request,
-    db=Depends(get_db),
-):
-    """
-    Get details of a workflow run including steps and artifacts.
-    """
-    tenant_id = "test-tenant-id"  # Replace with real tenant ID from auth
-    
-    workflow_run = db.query(WorkflowRun).filter(
-        WorkflowRun.id == run_id,
-        WorkflowRun.tenant_id == tenant_id,
-    ).first()
-    
-    if not workflow_run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow run not found: {run_id}",
-        )
-    
-    # Get steps
-    steps = db.query(WorkflowStep).filter(
-        WorkflowStep.run_id == run_id
-    ).order_by(WorkflowStep.order.asc()).all()
-    
-    # Get artifacts
-    artifacts = db.query(Artifact).filter(
-        Artifact.run_id == run_id
-    ).all()
-    
-    # Get workflow
-    workflow = db.query(Workflow).filter(
-        Workflow.id == workflow_run.workflow_id
-    ).first()
-    
-    return WorkflowRunDetailResponse(
-        **WorkflowRunResponse.from_orm(workflow_run).model_dump(),
-        steps=[step.to_dict() for step in steps],
-        artifacts=[artifact.to_dict() for artifact in artifacts],
-        workflow=workflow.to_dict() if workflow else None,
-    )
-
-
-@router.get("/runs", response_model=WorkflowRunListResponse)
-async def list_workflow_runs(
-    request: Request,
-    db=Depends(get_db),
-    pagination: PaginationParams = Depends(),
-    workflow_id: Optional[str] = Query(None, description="Filter by workflow ID"),
-    status: Optional[WorkflowRunStatus] = Query(None, description="Filter by status"),
-    trigger_type: Optional[WorkflowRunTriggerType] = Query(None, description="Filter by trigger type"),
-    search: Optional[str] = Query(None, description="Search in trigger data"),
-    start_date: Optional[datetime] = Query(None, description="Filter by start date"),
-    end_date: Optional[datetime] = Query(None, description="Filter by end date"),
-):
-    """
-    List workflow runs with optional filters.
-    
-    Supports:
-    - Pagination
-    - Filtering by workflow, status, trigger type, date range
-    - Search in trigger data
-    """
-    tenant_id = "test-tenant-id"  # Replace with real tenant ID from auth
-    
-    query = db.query(WorkflowRun).filter(WorkflowRun.tenant_id == tenant_id)
-    
-    # Apply filters
-    if workflow_id:
-        query = query.filter(WorkflowRun.workflow_id == workflow_id)
-    
-    if status:
-        query = query.filter(WorkflowRun.status == status)
-    
-    if trigger_type:
-        query = query.filter(WorkflowRun.trigger_type == trigger_type)
-    
-    if start_date:
-        query = query.filter(WorkflowRun.created_at >= start_date)
-    
-    if end_date:
-        query = query.filter(WorkflowRun.created_at <= end_date)
-    
-    # Get total count
-    total = query.count()
-    
-    # Apply pagination
-    workflow_runs = query.order_by(
-        WorkflowRun.created_at.desc()
-    ).offset(pagination.offset).limit(pagination.page_size).all()
-    
-    return WorkflowRunListResponse(
-        runs=[WorkflowRunResponse.from_orm(run) for run in workflow_runs],
-        total=total,
-        page=pagination.page,
-        page_size=pagination.page_size,
-    )
-
-
-@router.get("/stats", response_model=WorkflowRunStatsResponse)
-async def get_workflow_stats(
-    request: Request,
-    db=Depends(get_db),
-    workflow_id: Optional[str] = Query(None, description="Filter by workflow ID"),
-    start_date: Optional[datetime] = Query(None, description="Filter by start date"),
-    end_date: Optional[datetime] = Query(None, description="Filter by end date"),
-):
-    """
-    Get workflow run statistics.
-    """
-    tenant_id = "test-tenant-id"  # Replace with real tenant ID from auth
-    
-    query = db.query(WorkflowRun).filter(WorkflowRun.tenant_id == tenant_id)
-    
-    if workflow_id:
-        query = query.filter(WorkflowRun.workflow_id == workflow_id)
-    
-    if start_date:
-        query = query.filter(WorkflowRun.created_at >= start_date)
-    
-    if end_date:
-        query = query.filter(WorkflowRun.created_at <= end_date)
-    
-    workflow_runs = query.all()
-    
-    # Calculate statistics
-    total_runs = len(workflow_runs)
-    successful_runs = sum(1 for run in workflow_runs if run.status == WorkflowRunStatus.COMPLETED)
-    failed_runs = sum(1 for run in workflow_runs if run.status == WorkflowRunStatus.FAILED)
-    success_rate = successful_runs / total_runs if total_runs > 0 else 0.0
-    total_tokens = sum(run.total_tokens for run in workflow_runs)
-    
-    # Calculate duration statistics
-    durations = [run.total_duration_ms for run in workflow_runs if run.total_duration_ms > 0]
-    avg_duration_ms = sum(durations) / len(durations) if durations else 0.0
-    
-    if durations:
-        sorted_durations = sorted(durations)
-        p50_index = len(sorted_durations) // 2
-        p90_index = int(len(sorted_durations) * 0.9)
-        p50_duration_ms = sorted_durations[p50_index]
-        p90_duration_ms = sorted_durations[min(p90_index, len(sorted_durations) - 1)]
-    else:
-        p50_duration_ms = 0.0
-        p90_duration_ms = 0.0
-    
-    # Group by workflow
-    runs_by_workflow = {}
-    for run in workflow_runs:
-        workflow_id = run.workflow_id or "unknown"
-        runs_by_workflow[workflow_id] = runs_by_workflow.get(workflow_id, 0) + 1
-    
-    # Group by status
-    runs_by_status = {}
-    for run in workflow_runs:
-        runs_by_status[run.status.value] = runs_by_status.get(run.status.value, 0) + 1
-    
-    # Group by trigger
-    runs_by_trigger = {}
-    for run in workflow_runs:
-        runs_by_trigger[run.trigger_type.value] = runs_by_trigger.get(run.trigger_type.value, 0) + 1
-    
-    return WorkflowRunStatsResponse(
-        total_runs=total_runs,
-        successful_runs=successful_runs,
-        failed_runs=failed_runs,
-        success_rate=success_rate,
-        total_tokens=total_tokens,
-        avg_duration_ms=avg_duration_ms,
-        p50_duration_ms=p50_duration_ms,
-        p90_duration_ms=p90_duration_ms,
-        runs_by_workflow=runs_by_workflow,
-        runs_by_status=runs_by_status,
-        runs_by_trigger=runs_by_trigger,
-    )
-
-
+# --------------------------------------------------------------------------- #
+# Templates — declared BEFORE /{workflow_id} so the dynamic route doesn't eat them.
+# --------------------------------------------------------------------------- #
 @router.get("/templates", response_model=WorkflowTemplateListResponse)
 async def list_workflow_templates(
     request: Request,
-    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    List available workflow templates.
-    """
-    # In production, this would come from the database
-    # For now, return hardcoded templates
+    """List available workflow templates."""
     templates = [
         WorkflowTemplateResponse(
             id="template_post_meeting_followup",
@@ -565,7 +71,7 @@ async def list_workflow_templates(
                 "note_template": "summary",
                 "task_due_days": 2,
             },
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         ),
         WorkflowTemplateResponse(
             id="template_lead_assignment",
@@ -577,7 +83,7 @@ async def list_workflow_templates(
                 "followup_sequence": [1, 3, 7],
                 "notification_enabled": True,
             },
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         ),
         WorkflowTemplateResponse(
             id="template_support_triage",
@@ -593,79 +99,457 @@ async def list_workflow_templates(
                     "low": ["feedback"],
                 },
             },
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         ),
     ]
-    
-    return WorkflowTemplateListResponse(
-        templates=templates,
-        total=len(templates),
+    return WorkflowTemplateListResponse(templates=templates, total=len(templates))
+
+
+# --------------------------------------------------------------------------- #
+# Stats — also before /{workflow_id}.
+# --------------------------------------------------------------------------- #
+@router.get("/stats", response_model=WorkflowRunStatsResponse)
+async def get_workflow_stats(
+    request: Request,
+    workflow_id: Optional[str] = Query(None, description="Filter by workflow ID"),
+    start_date: Optional[datetime] = Query(None, description="Filter by start date"),
+    end_date: Optional[datetime] = Query(None, description="Filter by end date"),
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get workflow run statistics for the current tenant."""
+    query = db.query(WorkflowRun).filter(WorkflowRun.tenant_id == current_user.tenant_id)
+
+    if workflow_id:
+        query = query.filter(WorkflowRun.workflow_id == workflow_id)
+    if start_date:
+        query = query.filter(WorkflowRun.created_at >= start_date)
+    if end_date:
+        query = query.filter(WorkflowRun.created_at <= end_date)
+
+    workflow_runs = query.all()
+
+    total_runs = len(workflow_runs)
+    successful_runs = sum(1 for r in workflow_runs if r.status == WorkflowRunStatus.COMPLETED)
+    failed_runs = sum(1 for r in workflow_runs if r.status == WorkflowRunStatus.FAILED)
+    success_rate = successful_runs / total_runs if total_runs > 0 else 0.0
+    total_tokens = sum(r.total_tokens for r in workflow_runs)
+
+    durations = [r.total_duration_ms for r in workflow_runs if r.total_duration_ms > 0]
+    avg_duration_ms = sum(durations) / len(durations) if durations else 0.0
+    if durations:
+        sorted_durations = sorted(durations)
+        p50 = sorted_durations[len(sorted_durations) // 2]
+        p90 = sorted_durations[min(int(len(sorted_durations) * 0.9), len(sorted_durations) - 1)]
+    else:
+        p50 = 0.0
+        p90 = 0.0
+
+    runs_by_workflow: dict = {}
+    runs_by_status: dict = {}
+    runs_by_trigger: dict = {}
+    for r in workflow_runs:
+        wf_id = r.workflow_id or "unknown"
+        runs_by_workflow[wf_id] = runs_by_workflow.get(wf_id, 0) + 1
+        runs_by_status[r.status.value] = runs_by_status.get(r.status.value, 0) + 1
+        runs_by_trigger[r.trigger_type.value] = runs_by_trigger.get(r.trigger_type.value, 0) + 1
+
+    return WorkflowRunStatsResponse(
+        total_runs=total_runs,
+        successful_runs=successful_runs,
+        failed_runs=failed_runs,
+        success_rate=success_rate,
+        total_tokens=total_tokens,
+        avg_duration_ms=avg_duration_ms,
+        p50_duration_ms=p50,
+        p90_duration_ms=p90,
+        runs_by_workflow=runs_by_workflow,
+        runs_by_status=runs_by_status,
+        runs_by_trigger=runs_by_trigger,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Workflow runs list — also before /{workflow_id}.
+# --------------------------------------------------------------------------- #
+@router.get("/runs", response_model=WorkflowRunListResponse)
+async def list_workflow_runs(
+    request: Request,
+    pagination: PaginationParams = Depends(),
+    workflow_id: Optional[str] = Query(None),
+    status: Optional[WorkflowRunStatus] = Query(None),
+    trigger_type: Optional[WorkflowRunTriggerType] = Query(None),
+    search: Optional[str] = Query(None),
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List workflow runs for the current tenant."""
+    query = db.query(WorkflowRun).filter(WorkflowRun.tenant_id == current_user.tenant_id)
+
+    if workflow_id:
+        query = query.filter(WorkflowRun.workflow_id == workflow_id)
+    if status:
+        query = query.filter(WorkflowRun.status == status)
+    if trigger_type:
+        query = query.filter(WorkflowRun.trigger_type == trigger_type)
+    if start_date:
+        query = query.filter(WorkflowRun.created_at >= start_date)
+    if end_date:
+        query = query.filter(WorkflowRun.created_at <= end_date)
+
+    total = query.count()
+    workflow_runs = (
+        query.order_by(WorkflowRun.created_at.desc())
+        .offset(pagination.offset)
+        .limit(pagination.page_size)
+        .all()
+    )
+
+    return WorkflowRunListResponse(
+        runs=[WorkflowRunResponse.model_validate(r) for r in workflow_runs],
+        total=total,
+        page=pagination.page,
+        page_size=pagination.page_size,
+    )
+
+
+@router.get("/runs/{run_id}", response_model=WorkflowRunDetailResponse)
+async def get_workflow_run(
+    run_id: str,
+    request: Request,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get details of a workflow run including steps and artifacts."""
+    workflow_run = db.query(WorkflowRun).filter(
+        WorkflowRun.id == run_id,
+        WorkflowRun.tenant_id == current_user.tenant_id,
+    ).first()
+    if not workflow_run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow run not found: {run_id}",
+        )
+
+    steps = (
+        db.query(WorkflowStep)
+        .filter(WorkflowStep.run_id == run_id)
+        .order_by(WorkflowStep.order.asc())
+        .all()
+    )
+    artifacts = db.query(Artifact).filter(Artifact.run_id == run_id).all()
+    workflow = db.query(Workflow).filter(Workflow.id == workflow_run.workflow_id).first()
+
+    return WorkflowRunDetailResponse(
+        **WorkflowRunResponse.model_validate(workflow_run).model_dump(),
+        steps=[s.to_dict() for s in steps],
+        artifacts=[a.to_dict() for a in artifacts],
+        workflow=workflow.to_dict() if workflow else None,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Workflow CRUD
+# --------------------------------------------------------------------------- #
+@router.get("/", response_model=WorkflowListResponse)
+async def list_workflows(
+    request: Request,
+    pagination: PaginationParams = Depends(),
+    workflow_type: Optional[WorkflowType] = Query(None),
+    status: Optional[WorkflowStatus] = Query(None),
+    is_active: Optional[bool] = Query(None),
+    search: Optional[str] = Query(None),
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all workflows for the current tenant."""
+    query = db.query(Workflow).filter(Workflow.tenant_id == current_user.tenant_id)
+
+    if workflow_type:
+        query = query.filter(Workflow.workflow_type == workflow_type)
+    if status:
+        query = query.filter(Workflow.status == status)
+    if is_active is not None:
+        query = query.filter(Workflow.is_active == is_active)
+    if search:
+        pattern = f"%{search}%"
+        query = query.filter(
+            (Workflow.name.ilike(pattern)) | (Workflow.description.ilike(pattern))
+        )
+
+    total = query.count()
+    workflows = (
+        query.order_by(Workflow.priority.desc(), Workflow.name.asc())
+        .offset(pagination.offset)
+        .limit(pagination.page_size)
+        .all()
+    )
+
+    return WorkflowListResponse(
+        workflows=[WorkflowResponse.model_validate(wf) for wf in workflows],
+        total=total,
+        page=pagination.page,
+        page_size=pagination.page_size,
+    )
+
+
+@router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
+async def create_workflow(
+    workflow_data: WorkflowCreate,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a new workflow."""
+    existing = db.query(Workflow).filter(
+        Workflow.tenant_id == current_user.tenant_id,
+        Workflow.name == workflow_data.name,
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Workflow with name '{workflow_data.name}' already exists",
+        )
+
+    workflow = Workflow(
+        tenant_id=current_user.tenant_id,
+        created_by=current_user.id,
+        name=workflow_data.name,
+        description=workflow_data.description,
+        workflow_type=workflow_data.workflow_type,
+        config=workflow_data.config or {},
+        trigger_config=workflow_data.trigger_config or {},
+        priority=workflow_data.priority or 5,
+    )
+    db.add(workflow)
+    db.commit()
+    db.refresh(workflow)
+    logger.info(f"Created workflow: {workflow.id} (tenant={current_user.tenant_id})")
+    return WorkflowResponse.model_validate(workflow)
+
+
+@router.get("/{workflow_id}", response_model=WorkflowResponse)
+async def get_workflow(
+    workflow_id: str,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get a specific workflow by ID."""
+    workflow = db.query(Workflow).filter(
+        Workflow.id == workflow_id,
+        Workflow.tenant_id == current_user.tenant_id,
+    ).first()
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow not found: {workflow_id}",
+        )
+    return WorkflowResponse.model_validate(workflow)
+
+
+@router.put("/{workflow_id}", response_model=WorkflowResponse)
+async def update_workflow(
+    workflow_id: str,
+    workflow_data: WorkflowUpdate,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update a workflow."""
+    workflow = db.query(Workflow).filter(
+        Workflow.id == workflow_id,
+        Workflow.tenant_id == current_user.tenant_id,
+    ).first()
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow not found: {workflow_id}",
+        )
+
+    if workflow_data.name is not None:
+        workflow.name = workflow_data.name
+    if workflow_data.description is not None:
+        workflow.description = workflow_data.description
+    if workflow_data.config is not None:
+        workflow.config = workflow_data.config
+    if workflow_data.trigger_config is not None:
+        workflow.trigger_config = workflow_data.trigger_config
+    if workflow_data.is_active is not None:
+        workflow.is_active = workflow_data.is_active
+    if workflow_data.status is not None:
+        workflow.status = workflow_data.status
+    if workflow_data.priority is not None:
+        workflow.priority = workflow_data.priority
+
+    db.commit()
+    db.refresh(workflow)
+    return WorkflowResponse.model_validate(workflow)
+
+
+@router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workflow(
+    workflow_id: str,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Soft-delete a workflow (archive)."""
+    workflow = db.query(Workflow).filter(
+        Workflow.id == workflow_id,
+        Workflow.tenant_id == current_user.tenant_id,
+    ).first()
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow not found: {workflow_id}",
+        )
+
+    workflow.is_active = False
+    workflow.status = WorkflowStatus.ARCHIVED
+    db.commit()
+    return None
+
+
+@router.post("/{workflow_id}/runs", response_model=WorkflowRunResponse, status_code=status.HTTP_201_CREATED)
+async def trigger_workflow_run(
+    workflow_id: str,
+    run_data: WorkflowRunCreate,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Trigger a workflow run.
+
+    In production, this creates a PENDING run and enqueues a Celery task.
+    In dev/test (when Celery isn't reachable), the task is run synchronously.
+    """
+    workflow = db.query(Workflow).filter(
+        Workflow.id == workflow_id,
+        Workflow.tenant_id == current_user.tenant_id,
+    ).first()
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow not found: {workflow_id}",
+        )
+    if not workflow.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot run inactive workflow",
+        )
+
+    # Idempotency check
+    idempotency_key = run_data.idempotency_key or f"{workflow_id}:{run_data.trigger_type.value}:{uuid.uuid4()}"
+    existing_run = db.query(WorkflowRun).filter(
+        WorkflowRun.idempotency_key == idempotency_key,
+        WorkflowRun.tenant_id == current_user.tenant_id,
+    ).first()
+    if existing_run:
+        logger.info(f"Duplicate run detected for idempotency key: {idempotency_key}")
+        return WorkflowRunResponse.model_validate(existing_run)
+
+    run_id = str(uuid.uuid4())
+    workflow_run = WorkflowRun(
+        id=run_id,
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        workflow_id=workflow_id,
+        trigger_type=run_data.trigger_type,
+        trigger_data=run_data.trigger_data or {},
+        status=WorkflowRunStatus.PENDING,
+        idempotency_key=idempotency_key,
+        scheduled_for=run_data.scheduled_for,
+    )
+    db.add(workflow_run)
+
+    # Initial trigger step
+    step = WorkflowStep(
+        run_id=run_id,
+        step_type=WorkflowStepType.TRIGGER,
+        step_name="Workflow triggered",
+        status=WorkflowStepStatus.COMPLETED,
+        order=0,
+        latency_ms=0,
+        tokens_used=0,
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+    )
+    db.add(step)
+    db.commit()
+    db.refresh(workflow_run)
+
+    # Try to enqueue the Celery task; fall back to synchronous execution in dev.
+    try:
+        from worker.tasks import execute_workflow_run  # type: ignore[import]
+        execute_workflow_run.delay(
+            run_id=run_id,
+            workflow_id=workflow_id,
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.id,
+            trigger_type=run_data.trigger_type.value,
+            trigger_data=run_data.trigger_data or {},
+        )
+        workflow_run.status = WorkflowRunStatus.QUEUED
+        db.commit()
+        db.refresh(workflow_run)
+    except Exception as e:
+        # Dev mode: run synchronously so the system is usable without Redis/Celery.
+        logger.warning(f"Celery unavailable ({e}); running workflow synchronously")
+        try:
+            from verxlite_api.services.workflow_engine import WorkflowEngine
+            engine = WorkflowEngine(db)
+            engine.execute_workflow(
+                workflow_id=workflow_id,
+                tenant_id=current_user.tenant_id,
+                user_id=current_user.id,
+                trigger_type=run_data.trigger_type.value,
+                trigger_data=run_data.trigger_data or {},
+                run_id=run_id,
+            )
+            db.refresh(workflow_run)
+        except Exception as exec_err:
+            logger.error(f"Synchronous workflow execution failed: {exec_err}")
+            workflow_run.status = WorkflowRunStatus.FAILED
+            workflow_run.error_message = str(exec_err)
+            db.commit()
+            db.refresh(workflow_run)
+
+    return WorkflowRunResponse.model_validate(workflow_run)
 
 
 @router.post("/{workflow_id}/enable", response_model=WorkflowResponse)
 async def enable_workflow(
     workflow_id: str,
-    request: Request,
     db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    Enable a workflow.
-    """
-    tenant_id = "test-tenant-id"  # Replace with real tenant ID from auth
-    
+    """Enable a workflow."""
     workflow = db.query(Workflow).filter(
         Workflow.id == workflow_id,
-        Workflow.tenant_id == tenant_id,
+        Workflow.tenant_id == current_user.tenant_id,
     ).first()
-    
     if not workflow:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow not found: {workflow_id}",
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workflow not found: {workflow_id}")
     workflow.is_active = True
     workflow.status = WorkflowStatus.ACTIVE
-    workflow.updated_at = datetime.utcnow()
-    
     db.commit()
     db.refresh(workflow)
-    
-    logger.info(f"Enabled workflow: {workflow.id}")
-    
-    return WorkflowResponse.from_orm(workflow)
+    return WorkflowResponse.model_validate(workflow)
 
 
 @router.post("/{workflow_id}/disable", response_model=WorkflowResponse)
 async def disable_workflow(
     workflow_id: str,
-    request: Request,
     db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    Disable a workflow.
-    """
-    tenant_id = "test-tenant-id"  # Replace with real tenant ID from auth
-    
+    """Disable a workflow."""
     workflow = db.query(Workflow).filter(
         Workflow.id == workflow_id,
-        Workflow.tenant_id == tenant_id,
+        Workflow.tenant_id == current_user.tenant_id,
     ).first()
-    
     if not workflow:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow not found: {workflow_id}",
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Workflow not found: {workflow_id}")
     workflow.is_active = False
     workflow.status = WorkflowStatus.INACTIVE
-    workflow.updated_at = datetime.utcnow()
-    
     db.commit()
     db.refresh(workflow)
-    
-    logger.info(f"Disabled workflow: {workflow.id}")
-    
-    return WorkflowResponse.from_orm(workflow)
+    return WorkflowResponse.model_validate(workflow)
